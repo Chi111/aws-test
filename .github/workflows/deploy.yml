@@ -44,13 +44,32 @@ jobs:
       - name: SAM build
         run: sam build --template-file infra/sam/template.yaml
 
+      - name: Prepare SAM artifact bucket
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          SAM_ARTIFACT_BUCKET="${{ vars.SAM_ARTIFACT_BUCKET }}"
+          if [ -z "$SAM_ARTIFACT_BUCKET" ]; then
+            SAM_ARTIFACT_BUCKET="${STACK_NAME}-artifacts-${ACCOUNT_ID}-${AWS_REGION}"
+          fi
+          echo "SAM_ARTIFACT_BUCKET=$SAM_ARTIFACT_BUCKET" >> "$GITHUB_ENV"
+
+          if ! aws s3api head-bucket --bucket "$SAM_ARTIFACT_BUCKET" 2>/dev/null; then
+            if [ "$AWS_REGION" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "$SAM_ARTIFACT_BUCKET"
+            else
+              aws s3api create-bucket \
+                --bucket "$SAM_ARTIFACT_BUCKET" \
+                --create-bucket-configuration LocationConstraint="$AWS_REGION"
+            fi
+          fi
+
       - name: SAM deploy
         run: >
           sam deploy
           --stack-name "$STACK_NAME"
           --region "$AWS_REGION"
           --capabilities CAPABILITY_IAM
-          --resolve-s3
+          --s3-bucket "$SAM_ARTIFACT_BUCKET"
           --no-confirm-changeset
           --no-fail-on-empty-changeset
           --parameter-overrides

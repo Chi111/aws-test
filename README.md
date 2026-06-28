@@ -81,6 +81,7 @@ sam deploy --config-file infra/sam/samconfig.toml --template-file infra/sam/temp
 - Variable `PRIVATE_SUBNET_IDS`
 - Variable `AURORA_SECURITY_GROUP_ID`
 - Variable `VITE_SERVER_URL`
+- Optional variable `SAM_ARTIFACT_BUCKET`
 
 For your current AWS dev setup, use these values:
 
@@ -110,6 +111,7 @@ Variables:
 | `PRIVATE_SUBNET_IDS` | `subnet-0afbf279c7e89bd2d,subnet-0f1075ff3eaba752e` |
 | `AURORA_SECURITY_GROUP_ID` | `sg-0b4619fa07595e65f` |
 | `VITE_SERVER_URL` | First deploy: `http://localhost:3000`; after deploy, update to the API URL |
+| `SAM_ARTIFACT_BUCKET` | Optional. Default: `github-profile-sam-dev-artifacts-311816466050-us-east-2` |
 
 GitHub repo: `Chi111/aws-test`.
 
@@ -122,5 +124,39 @@ The GitHub Actions deploy role also needs permission to invoke the setup Lambda:
   "Effect": "Allow",
   "Action": "lambda:InvokeFunction",
   "Resource": "*"
+}
+```
+
+The workflow uses a fixed S3 bucket for SAM artifacts instead of `sam deploy --resolve-s3`. This avoids the hidden `aws-sam-cli-managed-default` CloudFormation stack. Add these extra permissions to the GitHub Actions deploy role:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "sts:GetCallerIdentity",
+  "Resource": "*"
+}
+```
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "s3:CreateBucket",
+    "s3:GetBucketLocation",
+    "s3:ListBucket"
+  ],
+  "Resource": "arn:aws:s3:::github-profile-sam-dev-artifacts-311816466050-us-east-2"
+}
+```
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "s3:PutObject",
+    "s3:GetObject",
+    "s3:DeleteObject"
+  ],
+  "Resource": "arn:aws:s3:::github-profile-sam-dev-artifacts-311816466050-us-east-2/*"
 }
 ```
