@@ -3,16 +3,16 @@ version = 0.1
 [default.deploy.parameters]
 stack_name = "github-profile-sam-dev"
 resolve_s3 = true
-region = "us-east-1"
+region = "us-east-2"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = false
 fail_on_empty_changeset = false
 parameter_overrides = [
   "ProjectName=github-profile-sam-dev",
-  "DatabaseUrl=postgresql://USER:PASSWORD@YOUR-AURORA-ENDPOINT:5432/DBNAME",
+  "DatabaseUrl=postgresql://postgres:YOUR_PASSWORD@database-1-instance-1.cziie46y84oa.us-east-2.rds.amazonaws.com:5432/database_japan",
   "JwtSecret=replace-with-at-least-32-characters",
   "CorsOrigin=http://localhost:3001",
-  "VpcId=vpc-xxxxxxxx",
-  "PrivateSubnetIds=subnet-aaaaaaa,subnet-bbbbbbb",
-  "AuroraSecurityGroupId=sg-xxxxxxxx"
+  "VpcId=vpc-0b653a19dd83dfa79",
+  "PrivateSubnetIds=subnet-0afbf279c7e89bd2d,subnet-0f1075ff3eaba752e",
+  "AuroraSecurityGroupId=sg-0b4619fa07595e65f"
 ]

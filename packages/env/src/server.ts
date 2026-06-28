@@ -5,6 +5,7 @@ import { z } from "zod";
 export const env = createEnv({
   server: {
     DATABASE_URL: z.string().min(1),
+    DATABASE_SSL_CA_PATH: z.string().optional(),
     CORS_ORIGIN: z.url(),
     JWT_SECRET: z.string().min(32).default("dev-only-change-me-jwt-secret-32-chars"),
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),

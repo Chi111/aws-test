@@ -14,7 +14,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
       STACK_NAME: ${{ vars.STACK_NAME || 'github-profile-sam-dev' }}
       VITE_SERVER_URL: ${{ vars.VITE_SERVER_URL }}
     steps:
@@ -38,6 +38,27 @@ jobs:
       - run: pnpm test
       - run: pnpm check-types
       - run: pnpm build
+
+      - name: Download RDS CA bundle
+        run: curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
+
+      - name: Push database schema
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_SSL_CA_PATH: ${{ github.workspace }}/global-bundle.pem
+          CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          NODE_ENV: production
+        run: pnpm db:push
+
+      - name: Seed demo users
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_SSL_CA_PATH: ${{ github.workspace }}/global-bundle.pem
+          CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          NODE_ENV: production
+        run: pnpm db:seed
 
       - uses: aws-actions/setup-sam@v2
 

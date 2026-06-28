@@ -13,6 +13,7 @@
     }
   },
   "scripts": {
+    "db:check": "tsx src/check-connection.ts",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
@@ -29,6 +30,7 @@
     "@github-profile-sam/config": "workspace:*",
     "@types/pg": "^8.16.0",
     "drizzle-kit": "^0.31.8",
+    "tsx": "^4.19.2",
     "typescript": "catalog:"
   }
 }

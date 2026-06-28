@@ -38,6 +38,7 @@ Seed accounts:
 - `pnpm test`: run automated tests.
 - `pnpm check-types`: TypeScript checks.
 - `pnpm build`: build server and web.
+- `pnpm db:check`: print a masked database connectivity diagnostic.
 - `pnpm db:generate`: generate Drizzle migrations.
 - `pnpm db:push`: push schema to a dev database.
 - `pnpm db:seed`: seed demo users.
@@ -80,3 +81,30 @@ sam deploy --config-file infra/sam/samconfig.toml --template-file infra/sam/temp
 - Variable `PRIVATE_SUBNET_IDS`
 - Variable `AURORA_SECURITY_GROUP_ID`
 - Variable `VITE_SERVER_URL`
+
+For your current AWS dev setup, use these values:
+
+Secrets:
+
+| Name | Value |
+| --- | --- |
+| `DATABASE_URL` | `postgresql://postgres:YOUR_PASSWORD@database-1-instance-1.cziie46y84oa.us-east-2.rds.amazonaws.com:5432/database_japan` |
+| `JWT_SECRET` | Any random string with at least 32 characters |
+| `AWS_DEPLOY_ROLE_ARN` | IAM role ARN trusted by `Chi111/aws-test` GitHub Actions |
+
+Variables:
+
+| Name | Value |
+| --- | --- |
+| `AWS_REGION` | `us-east-2` |
+| `STACK_NAME` | `github-profile-sam-dev` |
+| `PROJECT_NAME` | `github-profile-sam-dev` |
+| `CORS_ORIGIN` | First deploy: `http://localhost:3001`; after deploy, update to the S3 website URL |
+| `VPC_ID` | `vpc-0b653a19dd83dfa79` |
+| `PRIVATE_SUBNET_IDS` | `subnet-0afbf279c7e89bd2d,subnet-0f1075ff3eaba752e` |
+| `AURORA_SECURITY_GROUP_ID` | `sg-0b4619fa07595e65f` |
+| `VITE_SERVER_URL` | First deploy: `http://localhost:3000`; after deploy, update to the API URL |
+
+GitHub repo: `Chi111/aws-test`.
+
+The workflow downloads the AWS RDS global CA bundle, then runs `pnpm db:push` and `pnpm db:seed` before `sam deploy`. For that to work, your RDS security group must allow inbound PostgreSQL traffic from GitHub-hosted runners, or you need to run the workflow on a runner that has network access to the VPC.

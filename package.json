@@ -17,6 +17,7 @@
     "db:studio": "pnpm --filter @github-profile-sam/db db:studio",
     "db:generate": "pnpm --filter @github-profile-sam/db db:generate",
     "db:migrate": "pnpm --filter @github-profile-sam/db db:migrate",
+    "db:check": "pnpm --filter @github-profile-sam/db db:check",
     "db:seed": "pnpm --filter server db:seed"
   },
   "dependencies": {
