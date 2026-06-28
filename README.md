@@ -117,7 +117,12 @@ GitHub repo: `Chi111/aws-test`.
 
 The workflow does not connect to RDS directly from GitHub-hosted runners. It deploys a VPC-internal `SetupFunction`, then invokes that Lambda to create the MVP tables and seed demo users from inside your VPC. Keep RDS private; the RDS security group only needs to allow PostgreSQL from the Lambda security group created by the SAM stack.
 
-The GitHub Actions deploy role also needs permission to invoke the setup Lambda:
+IAM examples are provided here:
+
+- `infra/iam/github-actions-trust-policy.example.json`
+- `infra/iam/github-actions-deploy-policy.example.json`
+
+The deploy role needs permission to invoke the setup Lambda:
 
 ```json
 {
@@ -158,5 +163,19 @@ The workflow uses a fixed S3 bucket for SAM artifacts instead of `sam deploy --r
     "s3:DeleteObject"
   ],
   "Resource": "arn:aws:s3:::github-profile-sam-dev-artifacts-311816466050-us-east-2/*"
+}
+```
+
+SAM templates also require CloudFormation access to the AWS-owned transform resource:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "cloudformation:CreateChangeSet",
+    "cloudformation:GetTemplateSummary",
+    "cloudformation:ValidateTemplate"
+  ],
+  "Resource": "arn:aws:cloudformation:us-east-2:aws:transform/Serverless-2016-10-31"
 }
 ```

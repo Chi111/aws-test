@@ -63,6 +63,22 @@ jobs:
             fi
           fi
 
+      - name: Remove failed CloudFormation stack shell
+        run: |
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || true)
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+            aws cloudformation delete-stack \
+              --stack-name "$STACK_NAME" \
+              --region "$AWS_REGION"
+            aws cloudformation wait stack-delete-complete \
+              --stack-name "$STACK_NAME" \
+              --region "$AWS_REGION"
+          fi
+
       - name: SAM deploy
         run: >
           sam deploy
