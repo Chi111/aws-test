@@ -5,5 +5,5 @@ export default defineConfig({
   format: "esm",
   outDir: "./dist",
   clean: true,
-  noExternal: [/@github-profile-sam\/.*/],
+  noExternal: [/@github-profile-sam\/.*/, "pg"],
 });

@@ -37,6 +37,7 @@ Needs fixing before the next deploy:
 - The stack `github-profile-sam-dev` is currently `ROLLBACK_COMPLETE`; delete it before the next create attempt. The workflow now removes this failed shell automatically.
 - Current IAM simulation shows `iam:CreateRole`, `iam:TagRole`, `iam:AttachRolePolicy`, `iam:PassRole`, `ec2:CreateSecurityGroup`, `ec2:CreateTags`, and security group rule writes are still `implicitDeny`.
 - Attach `infra/iam/github-actions-deploy-policy.example.json` as an inline policy, or temporarily attach `IAMFullAccess` and `AmazonEC2FullAccess` for this dev MVP deployment.
+- After `IAMFullAccess` and `AmazonEC2FullAccess` were added, the next rollback was caused by missing API Gateway permissions: `apigateway:POST` on `arn:aws:apigateway:us-east-2::/tags/...`. Add `AmazonAPIGatewayAdministrator`, or use the updated API Gateway statement in `infra/iam/github-actions-deploy-policy.example.json`.
 
 Networking note for after deploy:
 
