@@ -5,5 +5,13 @@ export default defineConfig({
   format: "esm",
   outDir: "./dist",
   clean: true,
-  noExternal: [/@github-profile-sam\/.*/, "pg"],
+  noExternal: [
+    /@github-profile-sam\/.*/,
+    /^@hono\/node-server(\/.*)?$/,
+    /^dotenv(\/.*)?$/,
+    /^drizzle-orm(\/.*)?$/,
+    /^hono(\/.*)?$/,
+    /^pg(\/.*)?$/,
+    /^zod(\/.*)?$/,
+  ],
 });
