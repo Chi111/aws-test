@@ -160,7 +160,7 @@ Outputs:
     Value: !Ref WebBucket
   WebUrl:
     Description: S3 website URL for the dev MVP frontend.
-    Value: !Sub "http://${WebBucket}.s3-website-${AWS::Region}.amazonaws.com"
+    Value: !Sub "http://${WebBucket}.s3-website.${AWS::Region}.amazonaws.com"
   SetupFunctionName:
     Description: Lambda function that performs VPC-internal database setup.
     Value: !Ref SetupFunction

@@ -106,7 +106,7 @@ Variables:
 | `AWS_REGION` | `us-east-2` |
 | `STACK_NAME` | `github-profile-sam-dev` |
 | `PROJECT_NAME` | `github-profile-sam-dev` |
-| `CORS_ORIGIN` | First deploy: `http://localhost:3001`; after deploy, update to the S3 website URL |
+| `CORS_ORIGIN` | First deploy: `http://localhost:3001`; after deploy, update to `http://github-profile-sam-dev-web-311816466050-us-east-2.s3-website.us-east-2.amazonaws.com` |
 | `VPC_ID` | `vpc-0b653a19dd83dfa79` |
 | `PRIVATE_SUBNET_IDS` | `subnet-0afbf279c7e89bd2d,subnet-0f1075ff3eaba752e` |
 | `AURORA_SECURITY_GROUP_ID` | `sg-0b4619fa07595e65f` |
