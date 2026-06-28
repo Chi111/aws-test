@@ -1,0 +1,3 @@
+{
+  "extends": "@github-profile-sam/config/tsconfig.base.json"
+}

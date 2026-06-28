@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "status": "completed",
+  "activeCommand": "/chill-ai start",
+  "currentStage": "completed",
+  "currentFeature": "specs/1-github-profile-admin-sam",
+  "currentTaskId": "finish",
+  "lastSafeCheckpoint": {
+    "stage": "completed",
+    "summary": "MVP scaffold, API, React admin UI, Drizzle schema, SAM template, GitHub Actions workflow, and local verification are complete."
+  },
+  "nextSafeCommand": "",
+  "blockedGateId": null,
+  "autoRun": true
+}

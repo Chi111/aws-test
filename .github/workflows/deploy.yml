@@ -1,0 +1,71 @@
+name: Deploy MVP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      STACK_NAME: ${{ vars.STACK_NAME || 'github-profile-sam-dev' }}
+      VITE_SERVER_URL: ${{ vars.VITE_SERVER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm check-types
+      - run: pnpm build
+
+      - uses: aws-actions/setup-sam@v2
+
+      - name: SAM build
+        run: sam build --template-file infra/sam/template.yaml
+
+      - name: SAM deploy
+        run: >
+          sam deploy
+          --stack-name "$STACK_NAME"
+          --region "$AWS_REGION"
+          --capabilities CAPABILITY_IAM
+          --no-confirm-changeset
+          --no-fail-on-empty-changeset
+          --parameter-overrides
+          ProjectName=${{ vars.PROJECT_NAME || 'github-profile-sam-dev' }}
+          DatabaseUrl=${{ secrets.DATABASE_URL }}
+          JwtSecret=${{ secrets.JWT_SECRET }}
+          CorsOrigin=${{ vars.CORS_ORIGIN }}
+          VpcId=${{ vars.VPC_ID }}
+          PrivateSubnetIds=${{ vars.PRIVATE_SUBNET_IDS }}
+          AuroraSecurityGroupId=${{ vars.AURORA_SECURITY_GROUP_ID }}
+
+      - name: Upload web assets
+        run: |
+          WEB_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebBucketName'].OutputValue" \
+            --output text)
+          aws s3 sync apps/web/dist "s3://$WEB_BUCKET" --delete

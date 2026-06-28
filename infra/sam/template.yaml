@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: GitHub Profile Admin MVP using Hono Lambda, S3 web hosting, and an existing Aurora PostgreSQL database.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: github-profile-sam-dev
+    AllowedPattern: "^[a-z0-9-]+$"
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL connection string for the existing Aurora dev database.
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Secret used to sign the admin session cookie.
+  CorsOrigin:
+    Type: String
+    Default: "http://localhost:3001"
+    Description: Frontend origin allowed by the API.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC containing Aurora.
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Existing private subnets for Lambda.
+  AuroraSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Existing Aurora security group that should allow Lambda on port 5432.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    Timeout: 20
+    MemorySize: 512
+    Environment:
+      Variables:
+        NODE_ENV: production
+        DATABASE_URL: !Ref DatabaseUrl
+        JWT_SECRET: !Ref JwtSecret
+        CORS_ORIGIN: !Ref CorsOrigin
+
+Resources:
+  ApiHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowCredentials: true
+        AllowHeaders:
+          - content-type
+        AllowMethods:
+          - GET
+          - POST
+          - DELETE
+          - OPTIONS
+        AllowOrigins:
+          - !Ref CorsOrigin
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName} Lambda egress security group"
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  AuroraIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AuroraSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Description: Allow MVP Lambda to connect to existing Aurora PostgreSQL.
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-api"
+      CodeUri: ../../apps/server/dist
+      Handler: lambda.handler
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds: !Ref PrivateSubnetIds
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambdaVPCAccessExecutionRole
+      Events:
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ApiHttpApi
+            Path: /{proxy+}
+            Method: ANY
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ApiHttpApi
+            Path: /
+            Method: ANY
+
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-web-${AWS::AccountId}-${AWS::Region}"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowPublicReadForDevMvp
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${WebBucket.Arn}/*"
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API endpoint.
+    Value: !Sub "https://${ApiHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  WebBucketName:
+    Description: S3 bucket for built frontend assets.
+    Value: !Ref WebBucket
+  WebUrl:
+    Description: S3 website URL for the dev MVP frontend.
+    Value: !Sub "http://${WebBucket}.s3-website-${AWS::Region}.amazonaws.com"

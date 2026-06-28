@@ -1,0 +1,33 @@
+{
+  "name": "github-profile-sam",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -r dev",
+    "build": "pnpm -r build",
+    "check-types": "pnpm -r check-types",
+    "test": "pnpm -r test",
+    "dev:web": "pnpm --filter web dev",
+    "dev:server": "pnpm --filter server dev",
+    "db:push": "pnpm --filter @github-profile-sam/db db:push",
+    "db:studio": "pnpm --filter @github-profile-sam/db db:studio",
+    "db:generate": "pnpm --filter @github-profile-sam/db db:generate",
+    "db:migrate": "pnpm --filter @github-profile-sam/db db:migrate",
+    "db:seed": "pnpm --filter server db:seed"
+  },
+  "dependencies": {
+    "@github-profile-sam/env": "workspace:*",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@github-profile-sam/config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  },
+  "packageManager": "pnpm@11.7.0"
+}
