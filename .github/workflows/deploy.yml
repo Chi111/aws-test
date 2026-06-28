@@ -39,27 +39,6 @@ jobs:
       - run: pnpm check-types
       - run: pnpm build
 
-      - name: Download RDS CA bundle
-        run: curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
-
-      - name: Push database schema
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DATABASE_SSL_CA_PATH: ${{ github.workspace }}/global-bundle.pem
-          CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          NODE_ENV: production
-        run: pnpm db:push
-
-      - name: Seed demo users
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DATABASE_SSL_CA_PATH: ${{ github.workspace }}/global-bundle.pem
-          CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          NODE_ENV: production
-        run: pnpm db:seed
-
       - uses: aws-actions/setup-sam@v2
 
       - name: SAM build
@@ -81,6 +60,26 @@ jobs:
           VpcId=${{ vars.VPC_ID }}
           PrivateSubnetIds=${{ vars.PRIVATE_SUBNET_IDS }}
           AuroraSecurityGroupId=${{ vars.AURORA_SECURITY_GROUP_ID }}
+
+      - name: Run database setup inside VPC
+        run: |
+          SETUP_FUNCTION=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='SetupFunctionName'].OutputValue" \
+            --output text)
+          INVOKE_ERROR=$(aws lambda invoke \
+            --function-name "$SETUP_FUNCTION" \
+            --region "$AWS_REGION" \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{}' \
+            --query FunctionError \
+            --output text \
+            setup-output.json)
+          cat setup-output.json
+          if [ "$INVOKE_ERROR" != "None" ]; then
+            exit 1
+          fi
 
       - name: Upload web assets
         run: |

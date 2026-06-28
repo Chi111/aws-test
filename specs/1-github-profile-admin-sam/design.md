@@ -18,3 +18,5 @@
 
 ## Deployment
 SAM does not create Aurora or complex networking. It accepts VPC, private subnet, security group, database URL, and JWT secret parameters for a dev deployment.
+
+Database setup runs through a VPC-internal Lambda function after `sam deploy`, so GitHub-hosted runners do not need direct network access to RDS.

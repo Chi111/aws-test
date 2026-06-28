@@ -78,6 +78,9 @@ importers:
       hono:
         specifier: ^4.8.2
         version: 4.12.27
+      pg:
+        specifier: ^8.17.1
+        version: 8.22.0
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -88,6 +91,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 22.20.0
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
       tsdown:
         specifier: ^0.21.9
         version: 0.21.10(typescript@6.0.3)

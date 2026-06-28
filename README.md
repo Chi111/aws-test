@@ -92,6 +92,12 @@ Secrets:
 | `JWT_SECRET` | Any random string with at least 32 characters |
 | `AWS_DEPLOY_ROLE_ARN` | IAM role ARN trusted by `Chi111/aws-test` GitHub Actions |
 
+RDS console names can be confusing:
+
+- `database-1` is the RDS cluster/resource identifier.
+- `database-1-instance-1` is the DB instance/resource identifier and appears in the endpoint host.
+- `database_japan` is the PostgreSQL database name used at the end of `DATABASE_URL`.
+
 Variables:
 
 | Name | Value |
@@ -107,4 +113,14 @@ Variables:
 
 GitHub repo: `Chi111/aws-test`.
 
-The workflow downloads the AWS RDS global CA bundle, then runs `pnpm db:push` and `pnpm db:seed` before `sam deploy`. For that to work, your RDS security group must allow inbound PostgreSQL traffic from GitHub-hosted runners, or you need to run the workflow on a runner that has network access to the VPC.
+The workflow does not connect to RDS directly from GitHub-hosted runners. It deploys a VPC-internal `SetupFunction`, then invokes that Lambda to create the MVP tables and seed demo users from inside your VPC. Keep RDS private; the RDS security group only needs to allow PostgreSQL from the Lambda security group created by the SAM stack.
+
+The GitHub Actions deploy role also needs permission to invoke the setup Lambda:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "lambda:InvokeFunction",
+  "Resource": "*"
+}
+```

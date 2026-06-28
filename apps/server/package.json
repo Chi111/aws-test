@@ -18,11 +18,13 @@
     "dotenv": "catalog:",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.8.2",
+    "pg": "^8.17.1",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@github-profile-sam/config": "workspace:*",
     "@types/node": "catalog:",
+    "@types/pg": "^8.16.0",
     "tsdown": "^0.21.9",
     "tsx": "^4.19.2",
     "typescript": "catalog:",

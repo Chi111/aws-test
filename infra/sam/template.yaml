@@ -106,6 +106,22 @@ Resources:
             Path: /
             Method: ANY
 
+  SetupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-setup"
+      CodeUri: ../../apps/server/dist
+      Handler: setup.handler
+      Description: Runs idempotent MVP database setup inside the VPC.
+      Timeout: 60
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds: !Ref PrivateSubnetIds
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambdaVPCAccessExecutionRole
+
   WebBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -145,3 +161,6 @@ Outputs:
   WebUrl:
     Description: S3 website URL for the dev MVP frontend.
     Value: !Sub "http://${WebBucket}.s3-website-${AWS::Region}.amazonaws.com"
+  SetupFunctionName:
+    Description: Lambda function that performs VPC-internal database setup.
+    Value: !Ref SetupFunction
