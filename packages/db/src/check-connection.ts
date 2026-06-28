@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { Pool } from "pg";
+import { createDatabaseSslConfig } from "./ssl";
 
 dotenv.config({ path: "../../apps/server/.env" });
 
@@ -34,12 +35,10 @@ if (sslCaPath && !existsSync(sslCaPath)) {
 
 const pool = new Pool({
   connectionString: databaseUrl,
-  ssl: sslCaPath
-    ? {
-        ca: readFileSync(sslCaPath, "utf8"),
-        rejectUnauthorized: true,
-      }
-    : undefined,
+  ssl: createDatabaseSslConfig({
+    nodeEnv: process.env.NODE_ENV,
+    sslCaPath,
+  }),
   connectionTimeoutMillis: 10_000,
 });
 

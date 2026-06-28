@@ -1,4 +1,5 @@
 import { env } from "@github-profile-sam/env/server";
+import { createDatabaseSslConfig } from "@github-profile-sam/db/ssl";
 import { Pool } from "pg";
 import { createPasswordHash } from "./auth";
 
@@ -9,7 +10,13 @@ const users = [
 ] as const;
 
 export async function handler() {
-  const pool = new Pool({ connectionString: env.DATABASE_URL });
+  const pool = new Pool({
+    connectionString: env.DATABASE_URL,
+    ssl: createDatabaseSslConfig({
+      nodeEnv: env.NODE_ENV,
+      sslCaPath: env.DATABASE_SSL_CA_PATH,
+    }),
+  });
   const client = await pool.connect();
 
   try {
