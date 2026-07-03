@@ -125,10 +125,11 @@ export function createApp(options: CreateAppOptions = {}) {
     }
     const sessionUser = { id: user.id, email: user.email, name: user.name, role: user.role };
     const token = await signSession(sessionUser, jwtSecret);
+    const isProduction = options.isProduction ?? process.env.NODE_ENV === "production";
     setCookie(c, "admin_session", token, {
       httpOnly: true,
-      secure: options.isProduction ?? process.env.NODE_ENV === "production",
-      sameSite: "Lax",
+      secure: isProduction,
+      sameSite: isProduction ? "None" : "Lax",
       path: "/",
       maxAge: 60 * 60 * 8
     });
@@ -136,7 +137,12 @@ export function createApp(options: CreateAppOptions = {}) {
   });
 
   app.post("/api/auth/logout", (c) => {
-    deleteCookie(c, "admin_session", { path: "/" });
+    const isProduction = options.isProduction ?? process.env.NODE_ENV === "production";
+    deleteCookie(c, "admin_session", {
+      path: "/",
+      secure: isProduction,
+      sameSite: isProduction ? "None" : "Lax"
+    });
     return c.json({ ok: true });
   });
 
