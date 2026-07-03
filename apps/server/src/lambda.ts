@@ -5,6 +5,7 @@ type ApiGatewayV2Event = {
   rawPath?: string;
   rawQueryString?: string;
   headers?: Record<string, string | undefined>;
+  cookies?: string[];
   body?: string;
   isBase64Encoded?: boolean;
   requestContext?: {
@@ -34,6 +35,9 @@ function requestFromEvent(event: ApiGatewayV2Event) {
     if (value !== undefined) {
       headers.set(key, value);
     }
+  }
+  if (!headers.has("cookie") && event.cookies?.length) {
+    headers.set("cookie", event.cookies.join("; "));
   }
   const host = headers.get("host") ?? "lambda.local";
   const rawPath = event.rawPath || "/";
