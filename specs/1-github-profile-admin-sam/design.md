@@ -17,6 +17,8 @@
 - Backend enforces role permissions; frontend only mirrors them for UX.
 
 ## Deployment
-SAM does not create Aurora or complex networking. It accepts VPC, private subnet, security group, database URL, and JWT secret parameters for a dev deployment.
+SAM does not create Aurora. It accepts VPC, private subnet, security group, database URL, and JWT secret parameters for a dev deployment.
+
+For the MVP baseline, Lambda can keep using existing subnets. For a more complete cloud architecture, `EnableManagedVpcNetworking=true` lets SAM add one public subnet, two private Lambda subnets, a NAT Gateway, and route tables inside the existing VPC. The API and setup Lambda then use the managed private subnets automatically.
 
 Database setup runs through a VPC-internal Lambda function after `sam deploy`, so GitHub-hosted runners do not need direct network access to RDS.

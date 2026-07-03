@@ -13,3 +13,4 @@ Build a small backend admin system that can be run locally and deployed with SAM
 - Viewer can inspect saved profiles and fields but cannot write.
 - Drizzle owns the minimum PostgreSQL schema.
 - SAM deploys the Hono Lambda into existing VPC private subnets and points at an existing Aurora PostgreSQL database.
+- SAM can optionally create one public subnet, two private Lambda subnets, NAT, and route tables in the existing VPC for a more realistic dev network.

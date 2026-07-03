@@ -96,6 +96,14 @@ jobs:
           VpcId=${{ vars.VPC_ID }}
           PrivateSubnetIds=${{ vars.PRIVATE_SUBNET_IDS }}
           AuroraSecurityGroupId=${{ vars.AURORA_SECURITY_GROUP_ID }}
+          EnableManagedVpcNetworking=${{ vars.ENABLE_MANAGED_VPC_NETWORKING || 'false' }}
+          InternetGatewayId=${{ vars.INTERNET_GATEWAY_ID || '' }}
+          ManagedPublicSubnetCidr=${{ vars.MANAGED_PUBLIC_SUBNET_CIDR || '172.31.240.0/24' }}
+          ManagedPrivateSubnet1Cidr=${{ vars.MANAGED_PRIVATE_SUBNET_1_CIDR || '172.31.241.0/24' }}
+          ManagedPrivateSubnet2Cidr=${{ vars.MANAGED_PRIVATE_SUBNET_2_CIDR || '172.31.242.0/24' }}
+          ManagedPublicSubnetAz=${{ vars.MANAGED_PUBLIC_SUBNET_AZ || 'us-east-2a' }}
+          ManagedPrivateSubnet1Az=${{ vars.MANAGED_PRIVATE_SUBNET_1_AZ || 'us-east-2b' }}
+          ManagedPrivateSubnet2Az=${{ vars.MANAGED_PRIVATE_SUBNET_2_AZ || 'us-east-2c' }}
 
       - name: Run database setup inside VPC
         run: |

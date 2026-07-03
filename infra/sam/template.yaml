@@ -29,6 +29,44 @@ Parameters:
   AuroraSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Existing Aurora security group that should allow Lambda on port 5432.
+  EnableManagedVpcNetworking:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Create one public subnet, two private subnets, NAT, and route tables in the existing VPC for Lambda.
+  InternetGatewayId:
+    Type: String
+    Default: ""
+    Description: Existing VPC Internet Gateway ID. Required when EnableManagedVpcNetworking is true.
+  ManagedPublicSubnetCidr:
+    Type: String
+    Default: 172.31.240.0/24
+    Description: CIDR for the SAM-managed public subnet.
+  ManagedPrivateSubnet1Cidr:
+    Type: String
+    Default: 172.31.241.0/24
+    Description: CIDR for the first SAM-managed private Lambda subnet.
+  ManagedPrivateSubnet2Cidr:
+    Type: String
+    Default: 172.31.242.0/24
+    Description: CIDR for the second SAM-managed private Lambda subnet.
+  ManagedPublicSubnetAz:
+    Type: String
+    Default: us-east-2a
+    Description: Availability Zone for the SAM-managed public subnet.
+  ManagedPrivateSubnet1Az:
+    Type: String
+    Default: us-east-2b
+    Description: Availability Zone for the first SAM-managed private subnet.
+  ManagedPrivateSubnet2Az:
+    Type: String
+    Default: us-east-2c
+    Description: Availability Zone for the second SAM-managed private subnet.
+
+Conditions:
+  CreateManagedVpcNetworking: !Equals [!Ref EnableManagedVpcNetworking, "true"]
 
 Globals:
   Function:
@@ -69,6 +107,120 @@ Resources:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
 
+  ManagedPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref ManagedPublicSubnetCidr
+      AvailabilityZone: !Ref ManagedPublicSubnetAz
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-subnet"
+
+  ManagedPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref ManagedPrivateSubnet1Cidr
+      AvailabilityZone: !Ref ManagedPrivateSubnet1Az
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-private-subnet-1"
+
+  ManagedPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref ManagedPrivateSubnet2Cidr
+      AvailabilityZone: !Ref ManagedPrivateSubnet2Az
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-private-subnet-2"
+
+  ManagedPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-rt"
+
+  ManagedPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateManagedVpcNetworking
+    DependsOn:
+      - ManagedPublicSubnet
+    Properties:
+      RouteTableId: !Ref ManagedPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGatewayId
+
+  ManagedPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      SubnetId: !Ref ManagedPublicSubnet
+      RouteTableId: !Ref ManagedPublicRouteTable
+
+  ManagedNatEip:
+    Type: AWS::EC2::EIP
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-nat-eip"
+
+  ManagedNatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateManagedVpcNetworking
+    DependsOn:
+      - ManagedPublicDefaultRoute
+    Properties:
+      AllocationId: !GetAtt ManagedNatEip.AllocationId
+      SubnetId: !Ref ManagedPublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-nat"
+
+  ManagedPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-private-rt"
+
+  ManagedPrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      RouteTableId: !Ref ManagedPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref ManagedNatGateway
+
+  ManagedPrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      SubnetId: !Ref ManagedPrivateSubnet1
+      RouteTableId: !Ref ManagedPrivateRouteTable
+
+  ManagedPrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateManagedVpcNetworking
+    Properties:
+      SubnetId: !Ref ManagedPrivateSubnet2
+      RouteTableId: !Ref ManagedPrivateRouteTable
+
   AuroraIngressFromLambda:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -88,7 +240,11 @@ Resources:
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
-        SubnetIds: !Ref PrivateSubnetIds
+        SubnetIds: !If
+          - CreateManagedVpcNetworking
+          - - !Ref ManagedPrivateSubnet1
+            - !Ref ManagedPrivateSubnet2
+          - !Ref PrivateSubnetIds
       Policies:
         - AWSLambdaBasicExecutionRole
         - AWSLambdaVPCAccessExecutionRole
@@ -117,7 +273,11 @@ Resources:
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
-        SubnetIds: !Ref PrivateSubnetIds
+        SubnetIds: !If
+          - CreateManagedVpcNetworking
+          - - !Ref ManagedPrivateSubnet1
+            - !Ref ManagedPrivateSubnet2
+          - !Ref PrivateSubnetIds
       Policies:
         - AWSLambdaBasicExecutionRole
         - AWSLambdaVPCAccessExecutionRole
@@ -164,3 +324,15 @@ Outputs:
   SetupFunctionName:
     Description: Lambda function that performs VPC-internal database setup.
     Value: !Ref SetupFunction
+  ManagedPublicSubnetId:
+    Condition: CreateManagedVpcNetworking
+    Description: SAM-managed public subnet for NAT.
+    Value: !Ref ManagedPublicSubnet
+  ManagedPrivateSubnetIds:
+    Condition: CreateManagedVpcNetworking
+    Description: SAM-managed private subnets used by Lambda.
+    Value: !Join [",", [!Ref ManagedPrivateSubnet1, !Ref ManagedPrivateSubnet2]]
+  ManagedNatGatewayId:
+    Condition: CreateManagedVpcNetworking
+    Description: SAM-managed NAT gateway for Lambda outbound internet access.
+    Value: !Ref ManagedNatGateway

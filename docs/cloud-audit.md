@@ -44,6 +44,7 @@ Networking note for after deploy:
 - The selected subnets are default subnets with `MapPublicIpOnLaunch=true`.
 - The VPC has an Internet Gateway route, but no NAT Gateway.
 - Lambda functions attached to a VPC do not automatically receive public IPs, so GitHub API calls from Lambda may fail until private subnets with NAT, or another outbound design, is added.
+- The SAM template now includes optional managed VPC networking. Set `EnableManagedVpcNetworking=true` and provide the existing Internet Gateway ID to create one public subnet, two private Lambda subnets, NAT Gateway, and route tables.
 
 ## GitHub OIDC
 

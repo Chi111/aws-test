@@ -55,6 +55,15 @@ Copy `infra/sam/samconfig.example.toml` to `infra/sam/samconfig.toml`, then fill
 - `VpcId`
 - `PrivateSubnetIds`
 - `AuroraSecurityGroupId`
+- Optional managed VPC networking parameters:
+  - `EnableManagedVpcNetworking`
+  - `InternetGatewayId`
+  - `ManagedPublicSubnetCidr`
+  - `ManagedPrivateSubnet1Cidr`
+  - `ManagedPrivateSubnet2Cidr`
+  - `ManagedPublicSubnetAz`
+  - `ManagedPrivateSubnet1Az`
+  - `ManagedPrivateSubnet2Az`
 
 Build locally before deploy:
 
@@ -82,6 +91,10 @@ sam deploy --config-file infra/sam/samconfig.toml --template-file infra/sam/temp
 - Variable `AURORA_SECURITY_GROUP_ID`
 - Variable `VITE_SERVER_URL`
 - Optional variable `SAM_ARTIFACT_BUCKET`
+- Optional variable `ENABLE_MANAGED_VPC_NETWORKING`
+- Optional variable `INTERNET_GATEWAY_ID`
+- Optional variables `MANAGED_PUBLIC_SUBNET_CIDR`, `MANAGED_PRIVATE_SUBNET_1_CIDR`, `MANAGED_PRIVATE_SUBNET_2_CIDR`
+- Optional variables `MANAGED_PUBLIC_SUBNET_AZ`, `MANAGED_PRIVATE_SUBNET_1_AZ`, `MANAGED_PRIVATE_SUBNET_2_AZ`
 
 For your current AWS dev setup, use these values:
 
@@ -112,10 +125,52 @@ Variables:
 | `AURORA_SECURITY_GROUP_ID` | `sg-0b4619fa07595e65f` |
 | `VITE_SERVER_URL` | First deploy: `http://localhost:3000`; after deploy, update to the API URL |
 | `SAM_ARTIFACT_BUCKET` | Optional. Default: `github-profile-sam-dev-artifacts-311816466050-us-east-2` |
+| `ENABLE_MANAGED_VPC_NETWORKING` | Optional. `false` keeps the current default subnets; `true` creates one public subnet, two private subnets, NAT, and routes |
+| `INTERNET_GATEWAY_ID` | Required when `ENABLE_MANAGED_VPC_NETWORKING=true`. Current default VPC IGW was `igw-01db71fd0dd6333e6` during audit |
+| `MANAGED_PUBLIC_SUBNET_CIDR` | Optional. Default `172.31.240.0/24` |
+| `MANAGED_PRIVATE_SUBNET_1_CIDR` | Optional. Default `172.31.241.0/24` |
+| `MANAGED_PRIVATE_SUBNET_2_CIDR` | Optional. Default `172.31.242.0/24` |
+| `MANAGED_PUBLIC_SUBNET_AZ` | Optional. Default `us-east-2a` |
+| `MANAGED_PRIVATE_SUBNET_1_AZ` | Optional. Default `us-east-2b` |
+| `MANAGED_PRIVATE_SUBNET_2_AZ` | Optional. Default `us-east-2c` |
 
 GitHub repo: `Chi111/aws-test`.
 
 The workflow does not connect to RDS directly from GitHub-hosted runners. It deploys a VPC-internal `SetupFunction`, then invokes that Lambda to create the MVP tables and seed demo users from inside your VPC. Keep RDS private; the RDS security group only needs to allow PostgreSQL from the Lambda security group created by the SAM stack.
+
+## Optional: Managed VPC Networking
+
+The default MVP can run with the existing default subnets. To get closer to a production-style assignment architecture, enable SAM-managed networking:
+
+- One public subnet for NAT.
+- Two private subnets for Lambda.
+- Public route table to the existing Internet Gateway.
+- Private route table to NAT Gateway.
+- API and setup Lambda automatically use the two managed private subnets.
+- Aurora remains the existing database in the same VPC.
+
+Important: NAT Gateway has hourly and data processing cost. Enable it only when you need Lambda outbound internet access, for example calling GitHub `/user` from inside the VPC.
+
+Before enabling, confirm the CIDR blocks do not overlap with existing VPC subnets. Current defaults are intentionally high in the default VPC range:
+
+```txt
+public:    172.31.240.0/24
+private 1: 172.31.241.0/24
+private 2: 172.31.242.0/24
+```
+
+To enable from GitHub Actions variables:
+
+```txt
+ENABLE_MANAGED_VPC_NETWORKING=true
+INTERNET_GATEWAY_ID=igw-01db71fd0dd6333e6
+MANAGED_PUBLIC_SUBNET_CIDR=172.31.240.0/24
+MANAGED_PRIVATE_SUBNET_1_CIDR=172.31.241.0/24
+MANAGED_PRIVATE_SUBNET_2_CIDR=172.31.242.0/24
+MANAGED_PUBLIC_SUBNET_AZ=us-east-2a
+MANAGED_PRIVATE_SUBNET_1_AZ=us-east-2b
+MANAGED_PRIVATE_SUBNET_2_AZ=us-east-2c
+```
 
 IAM examples are provided here:
 

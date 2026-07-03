@@ -18,6 +18,7 @@ Build a small backend admin system that demonstrates frontend, backend, database
 - Let write roles add and delete custom key-value fields for a saved GitHub profile.
 - Use Drizzle for the minimum PostgreSQL schema.
 - Deploy the Hono API with SAM into existing VPC private subnets and connect to an existing Aurora PostgreSQL Serverless v2 database.
+- Optionally let SAM create the closer-to-real dev network shape: one public subnet for NAT and two private subnets for Lambda in the existing VPC.
 - Include a GitHub Actions OIDC deployment workflow.
 
 ## MVP Scope
@@ -50,6 +51,7 @@ Build a small backend admin system that demonstrates frontend, backend, database
 - Tests cover login, write denial, and GitHub profile save.
 - Typecheck and build pass.
 - SAM template is present for dev deployment with existing VPC/Aurora parameters.
+- Optional managed VPC networking can be enabled with parameters instead of rewriting the app.
 
 ## Related Specs
 - `specs/1-github-profile-admin-sam/requirements.md`

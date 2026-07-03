@@ -14,5 +14,13 @@ parameter_overrides = [
   "CorsOrigin=http://localhost:3001",
   "VpcId=vpc-0b653a19dd83dfa79",
   "PrivateSubnetIds=subnet-0afbf279c7e89bd2d,subnet-0f1075ff3eaba752e",
-  "AuroraSecurityGroupId=sg-0b4619fa07595e65f"
+  "AuroraSecurityGroupId=sg-0b4619fa07595e65f",
+  "EnableManagedVpcNetworking=false",
+  "InternetGatewayId=igw-01db71fd0dd6333e6",
+  "ManagedPublicSubnetCidr=172.31.240.0/24",
+  "ManagedPrivateSubnet1Cidr=172.31.241.0/24",
+  "ManagedPrivateSubnet2Cidr=172.31.242.0/24",
+  "ManagedPublicSubnetAz=us-east-2a",
+  "ManagedPrivateSubnet1Az=us-east-2b",
+  "ManagedPrivateSubnet2Az=us-east-2c"
 ]
