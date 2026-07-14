@@ -2,6 +2,10 @@
 
 MVP backend admin system built with `better-t-stack`: React/Vite, Hono, Drizzle, PostgreSQL, and SAM.
 
+The first Go migration increment lives in `apps/go-server`. It adds a read-only profile introduction API designed for Docker, ECS Fargate, ALB health checks, and later Cloud Map integration. See `apps/go-server/README.md` for its runtime contract and local commands.
+
+The PR preview architecture uses GitHub OIDC, three narrowly scoped IAM roles, CodeBuild, ECR, a shared ALB, and per-PR ECS Fargate services. See [PR 独立预览环境](docs/pr-preview-architecture.md) for the architecture and manual AWS console checklist.
+
 ## What It Does
 
 - Internal demo login with three roles: `admin`, `operator`, `viewer`.

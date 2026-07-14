@@ -1,0 +1,10 @@
+**
+!apps/
+!apps/go-server/
+!apps/go-server/go.mod
+!apps/go-server/go.sum
+!apps/go-server/cmd/
+!apps/go-server/cmd/**
+!apps/go-server/internal/
+!apps/go-server/internal/**
+!global-bundle.pem

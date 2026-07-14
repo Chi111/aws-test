@@ -1,0 +1,87 @@
+name: PR preview environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  # A close event must wait for any in-flight deploy before it deletes the stack.
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    # Forked pull requests never receive AWS credentials.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+      CODEBUILD_PROJECT: github-profile-pr-environment
+      TRIGGER_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-pr-trigger-role
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
+
+    steps:
+      - name: Configure temporary AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.TRIGGER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Select deploy or destroy action
+        shell: bash
+        run: |
+          if [ "${{ github.event.action }}" = "closed" ]; then
+            echo "PR_ACTION=destroy" >> "$GITHUB_ENV"
+            echo "SOURCE_VERSION=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
+          else
+            echo "PR_ACTION=deploy" >> "$GITHUB_ENV"
+            echo "SOURCE_VERSION=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Start trusted CodeBuild orchestration
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "$CODEBUILD_PROJECT" \
+            --environment-variables-override \
+              name=PR_ACTION,value="$PR_ACTION",type=PLAINTEXT \
+              name=PR_NUMBER,value="$PR_NUMBER",type=PLAINTEXT \
+              name=SOURCE_VERSION,value="$SOURCE_VERSION",type=PLAINTEXT \
+            --query 'build.id' \
+            --output text)
+          echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
+          echo "Started CodeBuild: $BUILD_ID"
+
+      - name: Wait for CodeBuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          while true; do
+            STATUS=$(aws codebuild batch-get-builds \
+              --ids "$BUILD_ID" \
+              --query 'builds[0].buildStatus' \
+              --output text)
+            echo "CodeBuild status: $STATUS"
+            case "$STATUS" in
+              SUCCEEDED)
+                break
+                ;;
+              IN_PROGRESS)
+                sleep 15
+                ;;
+              *)
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Publish preview URL
+        if: github.event.action != 'closed'
+        run: printf '### Preview URL\n\nhttp://pr-%s.%s\n' "$PR_NUMBER" "$PREVIEW_DOMAIN" >> "$GITHUB_STEP_SUMMARY"

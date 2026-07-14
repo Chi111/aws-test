@@ -1,0 +1,159 @@
+# Copy this file into the CodeBuild project's inline buildspec.
+# Do not configure CodeBuild to load the buildspec from the pull request.
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    commands:
+      - |
+        set -euo pipefail
+        : "${REPOSITORY_URL:?REPOSITORY_URL is required}"
+        : "${CONTROL_PLANE_REF:=main}"
+        : "${PR_ACTION:?PR_ACTION is required}"
+
+        case "$PR_ACTION" in
+          deploy)
+            : "${PR_NUMBER:?PR_NUMBER is required}"
+            : "${SOURCE_VERSION:?SOURCE_VERSION is required}"
+            printf '%s' "$SOURCE_VERSION" | grep -Eq '^[0-9a-f]{40}$' ||
+              { echo "SOURCE_VERSION must be a full Git commit SHA" >&2; exit 2; }
+            ;;
+          destroy)
+            : "${PR_NUMBER:?PR_NUMBER is required}"
+            ;;
+          deploy-base)
+            ;;
+          *)
+            echo "PR_ACTION must be deploy, destroy, or deploy-base" >&2
+            exit 2
+            ;;
+        esac
+        if [ "$PR_ACTION" != "deploy-base" ]; then
+          case "$PR_NUMBER" in
+            ''|*[!0-9]*)
+              echo "PR_NUMBER must be numeric" >&2
+              exit 2
+              ;;
+          esac
+          if [ "$PR_NUMBER" -lt 1 ] || [ "$PR_NUMBER" -gt 50000 ]; then
+            echo "PR_NUMBER must be between 1 and 50000" >&2
+            exit 2
+          fi
+        fi
+
+        WORK_ROOT="$PWD/work"
+        CONTROL_SOURCE="$WORK_ROOT/control-source"
+        APP_SOURCE="$WORK_ROOT/app-source"
+        mkdir -p "$WORK_ROOT"
+
+        git clone --filter=blob:none --no-checkout "$REPOSITORY_URL" "$CONTROL_SOURCE"
+        git -C "$CONTROL_SOURCE" fetch --depth 1 origin "$CONTROL_PLANE_REF"
+        git -C "$CONTROL_SOURCE" checkout --detach FETCH_HEAD
+
+        if [ "$PR_ACTION" = "deploy" ]; then
+          git clone --filter=blob:none --no-checkout "$REPOSITORY_URL" "$APP_SOURCE"
+          git -C "$APP_SOURCE" fetch --depth 1 origin "refs/pull/${PR_NUMBER}/head"
+          ACTUAL_SOURCE_VERSION=$(git -C "$APP_SOURCE" rev-parse FETCH_HEAD)
+          if [ "$ACTUAL_SOURCE_VERSION" != "$SOURCE_VERSION" ]; then
+            echo "PR head moved: expected $SOURCE_VERSION, found $ACTUAL_SOURCE_VERSION" >&2
+            exit 2
+          fi
+          git -C "$APP_SOURCE" checkout --detach FETCH_HEAD
+        fi
+
+        printf 'export WORK_ROOT=%q\n' "$WORK_ROOT" >> /tmp/pr-environment.env
+        printf 'export CONTROL_SOURCE=%q\n' "$CONTROL_SOURCE" >> /tmp/pr-environment.env
+        printf 'export APP_SOURCE=%q\n' "$APP_SOURCE" >> /tmp/pr-environment.env
+
+  pre_build:
+    commands:
+      - |
+        set -euo pipefail
+        source /tmp/pr-environment.env
+        : "${DEPLOY_ROLE_ARN:?DEPLOY_ROLE_ARN is required}"
+        : "${VPC_ID:?VPC_ID is required}"
+        : "${PUBLIC_SUBNET_IDS:?PUBLIC_SUBNET_IDS is required}"
+        AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        export AWS_ACCOUNT_ID
+
+        if [ "$PR_ACTION" = "deploy" ]; then
+          : "${ECR_REPOSITORY_URI:?ECR_REPOSITORY_URI is required}"
+          : "${PREVIEW_DOMAIN:?PREVIEW_DOMAIN is required}"
+          : "${ECS_TASK_EXECUTION_ROLE_ARN:?ECS_TASK_EXECUTION_ROLE_ARN is required}"
+          SHORT_SHA=$(printf '%s' "$SOURCE_VERSION" | cut -c1-12)
+          IMAGE_URI="${ECR_REPOSITORY_URI}:pr-${PR_NUMBER}-${SHORT_SHA}"
+          export IMAGE_URI
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login --username AWS --password-stdin "${ECR_REPOSITORY_URI%%/*}"
+        fi
+
+        read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN <<< "$(
+          aws sts assume-role \
+            --role-arn "$DEPLOY_ROLE_ARN" \
+            --role-session-name "github-profile-${PR_NUMBER:-base}" \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text
+        )"
+        export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+        printf 'export AWS_ACCOUNT_ID=%q\n' "$AWS_ACCOUNT_ID" >> /tmp/pr-environment.env
+        if [ "${IMAGE_URI:-}" != "" ]; then
+          printf 'export IMAGE_URI=%q\n' "$IMAGE_URI" >> /tmp/pr-environment.env
+        fi
+
+  build:
+    commands:
+      - |
+        set -euo pipefail
+        source /tmp/pr-environment.env
+        CDK_DIRECTORY="$CONTROL_SOURCE/infra/cdk/pr-environment"
+
+        case "$PR_ACTION" in
+          deploy)
+            DOCKER_BUILDKIT=1 docker build \
+              --platform linux/amd64 \
+              -f "$APP_SOURCE/apps/go-server/Dockerfile" \
+              -t "$IMAGE_URI" \
+              "$APP_SOURCE"
+            docker push "$IMAGE_URI"
+
+            export DEPLOY_MODE=pr
+            export PR_NUMBER IMAGE_URI PREVIEW_DOMAIN AWS_ACCOUNT_ID AWS_REGION
+            export VPC_ID PUBLIC_SUBNET_IDS ECS_TASK_EXECUTION_ROLE_ARN
+            STACK_NAME="github-profile-pr-${PR_NUMBER}"
+            ;;
+          destroy)
+            STACK_NAME="github-profile-pr-${PR_NUMBER}"
+            if aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>&1; then
+              aws cloudformation delete-stack --stack-name "$STACK_NAME"
+              aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+            else
+              echo "$STACK_NAME already absent"
+            fi
+            exit 0
+            ;;
+          deploy-base)
+            export DEPLOY_MODE=base
+            export AWS_ACCOUNT_ID AWS_REGION VPC_ID PUBLIC_SUBNET_IDS
+            STACK_NAME="github-profile-preview-base"
+            ;;
+          *)
+            echo "PR_ACTION must be deploy, destroy, or deploy-base" >&2
+            exit 2
+            ;;
+        esac
+
+        cd "$CDK_DIRECTORY"
+        go test ./...
+        npx --yes aws-cdk@2.1130.0 synth "$STACK_NAME" --quiet
+        aws cloudformation deploy \
+          --stack-name "$STACK_NAME" \
+          --template-file "cdk.out/${STACK_NAME}.template.json" \
+          --no-fail-on-empty-changeset \
+          --tags Project=github-profile-go Environment="${STACK_NAME#github-profile-}"
+
+  post_build:
+    commands:
+      - echo "PR environment action ${PR_ACTION} completed for ${PR_NUMBER:-base}"

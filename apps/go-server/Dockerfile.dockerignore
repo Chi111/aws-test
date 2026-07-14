@@ -1,0 +1,8 @@
+**
+!apps/
+!apps/go-server/
+!apps/go-server/**
+!global-bundle.pem
+apps/go-server/.env
+apps/go-server/.env.*
+!apps/go-server/.env.example
