@@ -30,6 +30,7 @@ func NewHandler(repository profile.Repository, service *introduction.Service, lo
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handler.health)
+	mux.HandleFunc("GET /preview", handler.preview)
 	mux.HandleFunc("GET /readyz", handler.ready)
 	mux.HandleFunc("GET /api/v1/introductions/{username}", handler.generateIntroduction)
 	return handler.cors(mux)
@@ -39,6 +40,14 @@ func (handler *Handler) health(response http.ResponseWriter, _ *http.Request) {
 	writeJSON(response, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"service": "github-profile-go",
+	})
+}
+
+func (handler *Handler) preview(response http.ResponseWriter, _ *http.Request) {
+	writeJSON(response, http.StatusOK, map[string]string{
+		"environment": "pull-request",
+		"service":     "github-profile-go",
+		"status":      "ok",
 	})
 }
 

@@ -50,6 +50,22 @@ func TestHealthDoesNotUseDatabase(t *testing.T) {
 	}
 }
 
+func TestPreviewIdentifiesPullRequestBuild(t *testing.T) {
+	repository := &fakeRepository{}
+	response := httptest.NewRecorder()
+	testHandler(repository).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/preview", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"environment":"pull-request"`) {
+		t.Fatalf("unexpected response body: %s", response.Body.String())
+	}
+	if repository.findCalls != 0 {
+		t.Fatal("preview endpoint queried the repository")
+	}
+}
+
 func TestReadiness(t *testing.T) {
 	tests := []struct {
 		name       string
