@@ -6,12 +6,20 @@
 flowchart LR
   Client["API Gateway 客户端"] --> Lambda["Node.js Lambda"]
   Lambda -->|"DNS: go.internal.github-profile"| DNS["Cloud Map 私有 DNS"]
-  DNS --> IP["Fargate Task 私有 IP"]
-  IP --> Go["Go 服务 :8080"]
+  DNS --> Internal["标准 ECS Service / ROLLING"]
+  Internal --> Go["Go Fargate Task :8080"]
+  Internet["公网客户端"] --> Express["ECS Express Service / CANARY"]
+  Express --> PublicGo["Go Fargate Task :8080"]
+  ECR["同一个 ECR 镜像"] --> Internal
+  ECR --> Express
 ```
 
 Cloud Map 创建与 VPC 关联的 Route 53 私有托管区。ECS 会在任务启动和停止时自动注册、注销任务私有 IP。
 Lambda 与 ECS 位于同一个 VPC，因此可以解析并访问 `go.internal.github-profile`。
+
+Express Mode 默认使用 `CANARY` 部署，而 ECS Service Registry 只支持 `ROLLING`。因此本项目保留 Express
+Service 作为公网灰度入口，并使用同一 ECR 镜像和任务定义创建独立的标准 ECS Service
+`github-profile-go-internal`，专门承担内部服务发现。
 
 ## 安全边界
 
@@ -40,16 +48,17 @@ GitHub Actions 仓库变量：
 | `CLOUD_MAP_NAMESPACE_NAME` | `internal.github-profile` |
 | `GO_SERVICE_SECURITY_GROUP_ID` | ECS Go 服务当前使用的安全组 ID |
 
-当前 ECS Express Service 是 `default/github-profile-cluster-f0e1`。安全组 ID 必须从该服务的「资源」页重新确认，
-不要只依赖旧截图中的值。
+当前 ECS Express Service 是 `default/github-profile-cluster-f0e1`。内部 ECS Service 复用它的任务定义、子网和
+安全组；安全组 ID 必须从 Express Service 的「资源」页重新确认，不要只依赖旧截图中的值。
 
 ## 部署顺序
 
 1. 推送代码，让现有 SAM 工作流更新 `github-profile-sam-dev`。
 2. 在 CloudFormation 输出中复制 `GoServiceDiscoveryServiceArn`。
-3. ECS → `default` 集群 → `github-profile-cluster-f0e1` → 更新服务。
-4. 将 Cloud Map 服务注册表 ARN 绑定到 ECS 服务并触发滚动部署。
-5. 等新任务为 Running，确认 Cloud Map 的 `go` 服务出现一个实例。
+3. 从当前 Express Service 运行任务中确认最新任务定义、子网、安全组和 Fargate 平台版本。
+4. 创建标准 ECS Service `github-profile-go-internal`，部署策略选择 `ROLLING`，期望任务数为 1，并绑定
+   `GoServiceDiscoveryServiceArn`。不要给该服务配置 ALB 或公共 URL。
+5. 等任务为 `RUNNING`，确认 Cloud Map 的 `go` 服务出现一个健康实例。
 6. 调用 `GET /api/go/health`，预期返回：
 
 ```json
@@ -64,6 +73,6 @@ GitHub Actions 仓库变量：
 
 Cloud Map 服务包含 ECS 注册实例时不能直接删除。必须按以下顺序清理：
 
-1. 从 ECS Service 移除 Service Registry，并等待滚动部署完成。
+1. 删除标准 ECS Service `github-profile-go-internal`，并等待任务停止、Cloud Map 实例自动注销。
 2. 将 `ENABLE_CLOUD_MAP_INTEGRATION` 改为 `false`，重新部署 SAM。
 3. CloudFormation 才能安全删除 Cloud Map 服务、命名空间和私有托管区。
