@@ -290,9 +290,15 @@ func newPRStack(scope constructs.Construct, id string, props *awscdk.StackProps,
 		"Name":                fmt.Sprintf("github-pr-%d", config.PRNumber),
 		"Port":                applicationContainerPort,
 		"Protocol":            "HTTP",
-		"TargetType":          "ip",
-		"VpcId":               vpcID,
-		"Tags":                resourceTags(resourceName),
+		"TargetGroupAttributes": []interface{}{
+			map[string]interface{}{
+				"Key":   "deregistration_delay.timeout_seconds",
+				"Value": "10",
+			},
+		},
+		"TargetType": "ip",
+		"VpcId":      vpcID,
+		"Tags":       resourceTags(resourceName),
 	})
 
 	service := newResource(stack, "Service", "AWS::ECS::Service", map[string]interface{}{
