@@ -15,6 +15,8 @@ type CreateAppOptions = {
   jwtSecret?: string;
   corsOrigin?: string;
   fetchGithub?: typeof fetch;
+  fetchGoService?: typeof fetch;
+  goServiceBaseUrl?: string;
   isProduction?: boolean;
 };
 
@@ -74,6 +76,8 @@ export function createApp(options: CreateAppOptions = {}) {
   const repository = options.repository ?? new DrizzleRepository();
   const jwtSecret = options.jwtSecret ?? process.env.JWT_SECRET ?? "dev-only-change-me-jwt-secret-32-chars";
   const fetchGithub = options.fetchGithub ?? fetch;
+  const fetchGoService = options.fetchGoService ?? fetch;
+  const goServiceBaseUrl = options.goServiceBaseUrl ?? process.env.GO_SERVICE_BASE_URL ?? "";
   const app = new Hono<{ Variables: Variables }>();
 
   app.use(logger());
@@ -113,6 +117,29 @@ export function createApp(options: CreateAppOptions = {}) {
   };
 
   app.get("/health", (c) => c.json({ status: "ok", service: "github-profile-sam" }));
+
+  app.get("/api/go/health", async (c) => {
+    if (!goServiceBaseUrl) {
+      return c.json({ error: "Go service discovery is not configured" }, 503);
+    }
+    try {
+      const healthUrl = new URL("/healthz", `${goServiceBaseUrl.replace(/\/$/, "")}/`);
+      const response = await fetchGoService(healthUrl, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(3000)
+      });
+      if (!response.ok) {
+        return c.json({ error: "Go service is unavailable" }, 503);
+      }
+      const health = (await response.json()) as { service?: unknown; status?: unknown };
+      if (health.service !== "github-profile-go" || health.status !== "ok") {
+        return c.json({ error: "Go service returned an invalid health response" }, 502);
+      }
+      return c.json({ discovery: "cloud-map", service: health.service, status: health.status });
+    } catch {
+      return c.json({ error: "Go service is unavailable" }, 503);
+    }
+  });
 
   app.post("/api/auth/login", async (c) => {
     const parsed = loginSchema.safeParse(await c.req.json().catch(() => ({})));

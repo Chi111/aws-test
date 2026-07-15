@@ -96,6 +96,9 @@ jobs:
           VpcId=${{ vars.VPC_ID }}
           PrivateSubnetIds=${{ vars.PRIVATE_SUBNET_IDS }}
           AuroraSecurityGroupId=${{ vars.AURORA_SECURITY_GROUP_ID }}
+          EnableCloudMapIntegration=${{ vars.ENABLE_CLOUD_MAP_INTEGRATION || 'false' }}
+          CloudMapNamespaceName=${{ vars.CLOUD_MAP_NAMESPACE_NAME || 'internal.github-profile' }}
+          GoServiceSecurityGroupId=${{ vars.GO_SERVICE_SECURITY_GROUP_ID || '' }}
           EnableManagedVpcNetworking=${{ vars.ENABLE_MANAGED_VPC_NETWORKING || 'false' }}
           InternetGatewayId=${{ vars.INTERNET_GATEWAY_ID || '' }}
           ManagedPublicSubnetCidr=${{ vars.MANAGED_PUBLIC_SUBNET_CIDR || '172.31.240.0/24' }}

@@ -7,6 +7,7 @@ export const env = createEnv({
     DATABASE_URL: z.string().min(1),
     DATABASE_SSL_CA_PATH: z.string().optional(),
     CORS_ORIGIN: z.url(),
+    GO_SERVICE_BASE_URL: z.url().optional(),
     JWT_SECRET: z.string().min(32).default("dev-only-change-me-jwt-secret-32-chars"),
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   },

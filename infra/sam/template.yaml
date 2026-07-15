@@ -29,6 +29,22 @@ Parameters:
   AuroraSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Existing Aurora security group that should allow Lambda on port 5432.
+  EnableCloudMapIntegration:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Create private Cloud Map DNS resources and allow Lambda to call the Go ECS service.
+  CloudMapNamespaceName:
+    Type: String
+    Default: internal.github-profile
+    AllowedPattern: "^[a-z0-9.-]+$"
+    Description: Private DNS namespace used inside the VPC.
+  GoServiceSecurityGroupId:
+    Type: String
+    Default: ""
+    Description: Existing ECS Go service security group. Required when Cloud Map integration is enabled.
   EnableManagedVpcNetworking:
     Type: String
     Default: "false"
@@ -65,8 +81,16 @@ Parameters:
     Default: us-east-2c
     Description: Availability Zone for the second SAM-managed private subnet.
 
+Rules:
+  RequireGoServiceSecurityGroupForCloudMap:
+    RuleCondition: !Equals [!Ref EnableCloudMapIntegration, "true"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref GoServiceSecurityGroupId, ""]]
+        AssertDescription: GoServiceSecurityGroupId is required when Cloud Map integration is enabled.
+
 Conditions:
   CreateManagedVpcNetworking: !Equals [!Ref EnableManagedVpcNetworking, "true"]
+  CreateCloudMapIntegration: !Equals [!Ref EnableCloudMapIntegration, "true"]
 
 Globals:
   Function:
@@ -81,6 +105,10 @@ Globals:
         DATABASE_URL: !Ref DatabaseUrl
         JWT_SECRET: !Ref JwtSecret
         CORS_ORIGIN: !Ref CorsOrigin
+        GO_SERVICE_BASE_URL: !If
+          - CreateCloudMapIntegration
+          - !Sub "http://go.${CloudMapNamespaceName}:8080"
+          - ""
 
 Resources:
   ApiHttpApi:
@@ -106,6 +134,46 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
+
+  CloudMapNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Condition: CreateCloudMapIntegration
+    Properties:
+      Name: !Ref CloudMapNamespaceName
+      Description: Private service discovery namespace for GitHub Profile workloads.
+      Vpc: !Ref VpcId
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  GoServiceDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Condition: CreateCloudMapIntegration
+    Properties:
+      Name: go
+      Description: Private DNS records automatically registered by the ECS Go service.
+      NamespaceId: !Ref CloudMapNamespace
+      DnsConfig:
+        RoutingPolicy: MULTIVALUE
+        DnsRecords:
+          - Type: A
+            TTL: 10
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  GoServiceIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateCloudMapIntegration
+    Properties:
+      GroupId: !Ref GoServiceSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Description: Allow Lambda to call the Go service through its private task IP.
 
   ManagedPublicSubnet:
     Type: AWS::EC2::Subnet
@@ -336,3 +404,15 @@ Outputs:
     Condition: CreateManagedVpcNetworking
     Description: SAM-managed NAT gateway for Lambda outbound internet access.
     Value: !Ref ManagedNatGateway
+  CloudMapNamespaceId:
+    Condition: CreateCloudMapIntegration
+    Description: Private DNS namespace ID used by ECS service discovery.
+    Value: !Ref CloudMapNamespace
+  GoServiceDiscoveryServiceArn:
+    Condition: CreateCloudMapIntegration
+    Description: Registry ARN to attach to the existing ECS Go service.
+    Value: !GetAtt GoServiceDiscoveryService.Arn
+  GoServicePrivateDnsName:
+    Condition: CreateCloudMapIntegration
+    Description: Private Go service DNS name resolvable from Lambda subnets.
+    Value: !Sub "go.${CloudMapNamespaceName}"

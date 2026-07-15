@@ -25,6 +25,7 @@ type LambdaResponse = {
 
 const app = createApp({
   corsOrigin: env.CORS_ORIGIN,
+  goServiceBaseUrl: env.GO_SERVICE_BASE_URL,
   jwtSecret: env.JWT_SECRET,
   isProduction: env.NODE_ENV === "production"
 });

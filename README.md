@@ -6,6 +6,8 @@ The first Go migration increment lives in `apps/go-server`. It adds a read-only 
 
 The PR preview architecture uses GitHub OIDC, three narrowly scoped IAM roles, CodeBuild, ECR, a shared ALB, and per-PR ECS Fargate services. See [PR 独立预览环境](docs/pr-preview-architecture.md) for the architecture and manual AWS console checklist.
 
+The private service-to-service path lets the VPC-attached Lambda call the ECS Go service through Cloud Map DNS without traversing the public ALB. See [Lambda 通过 Cloud Map 调用 ECS Go 服务](docs/cloud-map-lambda.md).
+
 ## What It Does
 
 - Internal demo login with three roles: `admin`, `operator`, `viewer`.
@@ -180,6 +182,7 @@ IAM examples are provided here:
 
 - `infra/iam/github-actions-trust-policy.example.json`
 - `infra/iam/github-actions-deploy-policy.example.json`
+- `infra/iam/cloud-map-deploy-policy.example.json`
 
 The deploy role needs permission to invoke the setup Lambda:
 

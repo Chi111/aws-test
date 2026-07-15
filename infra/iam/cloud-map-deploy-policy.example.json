@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageGithubProfilePrivateServiceDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "servicediscovery:CreatePrivateDnsNamespace",
+        "servicediscovery:UpdatePrivateDnsNamespace",
+        "servicediscovery:DeleteNamespace",
+        "servicediscovery:GetNamespace",
+        "servicediscovery:ListNamespaces",
+        "servicediscovery:CreateService",
+        "servicediscovery:UpdateService",
+        "servicediscovery:DeleteService",
+        "servicediscovery:GetService",
+        "servicediscovery:ListServices",
+        "servicediscovery:GetOperation",
+        "servicediscovery:ListOperations",
+        "servicediscovery:TagResource",
+        "servicediscovery:UntagResource",
+        "servicediscovery:ListTagsForResource",
+        "route53:CreateHostedZone",
+        "route53:GetHostedZone",
+        "route53:ListHostedZonesByName",
+        "route53:DeleteHostedZone",
+        "route53:ChangeResourceRecordSets",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeRegions"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

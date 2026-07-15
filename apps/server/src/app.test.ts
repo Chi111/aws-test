@@ -121,4 +121,72 @@ describe("admin MVP API", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ profile: { githubId: "123", login: "octo" } });
   });
+
+  it("calls the Go health endpoint through its configured Cloud Map DNS name", async () => {
+    const fetchGoService = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe("http://go.internal.github-profile:8080/healthz");
+      return new Response(JSON.stringify({ service: "github-profile-go", status: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const app = createApp({
+      repository: await createRepo(),
+      fetchGoService,
+      goServiceBaseUrl: "http://go.internal.github-profile:8080"
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/go/health"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      discovery: "cloud-map",
+      service: "github-profile-go",
+      status: "ok"
+    });
+    expect(fetchGoService).toHaveBeenCalledOnce();
+  });
+
+  it("does not attempt service discovery when the Go endpoint is not configured", async () => {
+    const fetchGoService = vi.fn();
+    const app = createApp({ repository: await createRepo(), fetchGoService, goServiceBaseUrl: "" });
+
+    const response = await app.fetch(new Request("http://localhost/api/go/health"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "Go service discovery is not configured" });
+    expect(fetchGoService).not.toHaveBeenCalled();
+  });
+
+  it("returns a sanitized error when the Go service cannot be reached", async () => {
+    const fetchGoService = vi.fn(async () => {
+      throw new Error("getaddrinfo ENOTFOUND go.internal.github-profile");
+    });
+    const app = createApp({
+      repository: await createRepo(),
+      fetchGoService,
+      goServiceBaseUrl: "http://go.internal.github-profile:8080"
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/go/health"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "Go service is unavailable" });
+  });
+
+  it("rejects an unexpected Go health response", async () => {
+    const fetchGoService = vi.fn(async () =>
+      new Response(JSON.stringify({ service: "unexpected-service", status: "ok" }), { status: 200 })
+    );
+    const app = createApp({
+      repository: await createRepo(),
+      fetchGoService,
+      goServiceBaseUrl: "http://go.internal.github-profile:8080"
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/go/health"));
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({ error: "Go service returned an invalid health response" });
+  });
 });
