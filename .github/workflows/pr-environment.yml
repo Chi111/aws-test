@@ -255,7 +255,10 @@ jobs:
           set -euo pipefail
           SOURCE_VERSION='${{ github.event.pull_request.head.sha }}'
           SHORT_SHA="${SOURCE_VERSION:0:12}"
-          IMAGE_URI="${ECR_REPOSITORY_URI}:pr-${PR_NUMBER}-${SHORT_SHA}"
+          # ECR tags are immutable. Include the Actions run and attempt so a
+          # retry never tries to overwrite the image pushed by an earlier run.
+          IMAGE_TAG="pr-${PR_NUMBER}-${SHORT_SHA}-run-${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+          IMAGE_URI="${ECR_REPOSITORY_URI}:${IMAGE_TAG}"
           docker build \
             --platform linux/amd64 \
             -f app-source/apps/go-server/Dockerfile \
