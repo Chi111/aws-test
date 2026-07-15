@@ -35,46 +35,48 @@ jobs:
 
     steps:
       - name: Configure trigger role through GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.TRIGGER_ROLE_ARN }}
           role-session-name: preview-base-trigger
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Chain into the existing build role
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.BUILD_ROLE_ARN }}
           role-session-name: preview-base-build
           role-chaining: true
+          role-skip-session-tagging: true
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Check out trusted deployment code from main
         if: inputs.action == 'deploy'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 1
 
       - name: Set up Go
         if: inputs.action == 'deploy'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: infra/cdk/pr-environment/go.mod
           cache-dependency-path: infra/cdk/pr-environment/go.sum
 
       - name: Set up Node.js
         if: inputs.action == 'deploy'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Chain into the preview deploy role
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
           role-session-name: preview-base-deploy
           role-chaining: true
+          role-skip-session-tagging: true
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy or destroy the shared base stack

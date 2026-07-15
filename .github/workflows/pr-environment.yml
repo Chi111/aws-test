@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Configure temporary AWS credentials through OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.TRIGGER_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -106,22 +106,23 @@ jobs:
 
     steps:
       - name: Configure trigger role through GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.TRIGGER_ROLE_ARN }}
           role-session-name: pr-${{ env.PR_NUMBER }}-trigger
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Chain into the existing build role
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.BUILD_ROLE_ARN }}
           role-session-name: pr-${{ env.PR_NUMBER }}-build
           role-chaining: true
+          role-skip-session-tagging: true
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Check out trusted deployment code from main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           path: control-source
@@ -129,7 +130,7 @@ jobs:
 
       - name: Check out the exact PR revision
         if: github.event.action != 'closed'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: app-source
@@ -137,14 +138,14 @@ jobs:
 
       - name: Set up Go
         if: github.event.action != 'closed'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: control-source/infra/cdk/pr-environment/go.mod
           cache-dependency-path: control-source/infra/cdk/pr-environment/go.sum
 
       - name: Set up Node.js
         if: github.event.action != 'closed'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -169,11 +170,12 @@ jobs:
           echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
       - name: Chain into the preview deploy role
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
           role-session-name: pr-${{ env.PR_NUMBER }}-deploy
           role-chaining: true
+          role-skip-session-tagging: true
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy or destroy the PR stack
