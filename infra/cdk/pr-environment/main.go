@@ -47,7 +47,7 @@ func main() {
 	stackProps := &awscdk.StackProps{Env: &awscdk.Environment{
 		Account: jsii.String(config.AccountID),
 		Region:  jsii.String(config.Region),
-	}}
+	}, Synthesizer: awscdk.NewBootstraplessSynthesizer(nil)}
 
 	switch config.DeployMode {
 	case "base":
