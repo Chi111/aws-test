@@ -1,0 +1,115 @@
+name: PR preview shared base
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Create or remove the shared ALB and ECS cluster
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pr-preview-shared-base
+  cancel-in-progress: false
+
+jobs:
+  base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+      AWS_ACCOUNT_ID: "311816466050"
+      TRIGGER_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-pr-trigger-role
+      BUILD_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-codebuild-role
+      DEPLOY_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-pr-deploy-role
+      VPC_ID: vpc-0b653a19dd83dfa79
+      PUBLIC_SUBNET_IDS: subnet-0f1075ff3eaba752e,subnet-0afbf279c7e89bd2d,subnet-0af83aebdf25ab627
+
+    steps:
+      - name: Configure trigger role through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.TRIGGER_ROLE_ARN }}
+          role-session-name: preview-base-trigger
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Chain into the existing build role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BUILD_ROLE_ARN }}
+          role-session-name: preview-base-build
+          role-chaining: true
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check out trusted deployment code from main
+        if: inputs.action == 'deploy'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Set up Go
+        if: inputs.action == 'deploy'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: infra/cdk/pr-environment/go.mod
+          cache-dependency-path: infra/cdk/pr-environment/go.sum
+
+      - name: Set up Node.js
+        if: inputs.action == 'deploy'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Chain into the preview deploy role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          role-session-name: preview-base-deploy
+          role-chaining: true
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy or destroy the shared base stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          STACK_NAME=github-profile-preview-base
+
+          if [ '${{ inputs.action }}' = 'destroy' ]; then
+            if aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>&1; then
+              aws cloudformation delete-stack --stack-name "$STACK_NAME"
+              aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+            else
+              echo "$STACK_NAME already absent"
+            fi
+            exit 0
+          fi
+
+          export DEPLOY_MODE=base
+          cd infra/cdk/pr-environment
+          go test ./...
+          npx --yes aws-cdk@2.1130.0 synth "$STACK_NAME" --quiet
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file "cdk.out/${STACK_NAME}.template.json" \
+            --no-fail-on-empty-changeset \
+            --tags Project=github-profile-go Environment=preview-base
+
+      - name: Publish ALB information
+        if: inputs.action == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name github-profile-preview-base \
+            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDNSName'].OutputValue | [0]" \
+            --output text)
+          printf '### Shared preview ALB\n\n`%s`\n' "$ALB_DNS" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TrustOnlyThisRepositoryPRsAndMain",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::311816466050:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": [
+            "repo:Chi111/aws-test:pull_request",
+            "repo:Chi111/aws-test:ref:refs/heads/main"
+          ]
+        }
+      }
+    }
+  ]
+}

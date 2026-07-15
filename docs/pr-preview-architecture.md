@@ -31,6 +31,51 @@ flowchart LR
 
 GitHub 和 CodeBuild 都不保存长期 Access Key。所有权限都是短期凭证。
 
+## CodeBuild 配额为 0 时的执行器切换
+
+新 AWS 账户可能暂时无法启动任何 CodeBuild 构建。此时设置 GitHub 仓库变量
+`PR_EXECUTOR=github-actions`，工作流会保留相同的三角色权限链，只把执行计算从 CodeBuild 容器切换到
+GitHub 托管 Runner：
+
+```mermaid
+flowchart LR
+  PR["GitHub PR"] -->|"OIDC"| Trigger["触发角色"]
+  Trigger -->|"AssumeRole"| Build["CodeBuild 角色（构建权限边界）"]
+  Build --> ECR["ECR"]
+  Build -->|"AssumeRole"| Deploy["部署角色"]
+  Deploy --> CFN["CloudFormation"]
+```
+
+`github-profile-codebuild-role` 在这里仍代表“构建权限边界”，只是暂时不由 CodeBuild 服务承担计算。
+AWS 放开配额后，将 `PR_EXECUTOR` 改成 `codebuild` 即可切回原路径。
+
+手动配置三项 IAM：
+
+1. 将 `github-profile-pr-trigger-role` 的信任关系更新为
+   [触发角色回退信任策略](../infra/iam/pr-trigger-fallback-trust-policy.example.json)，只允许本仓库 PR 和 `main`。
+2. 将 [触发角色回退权限](../infra/iam/pr-trigger-fallback-policy.example.json) 添加到
+   `github-profile-pr-trigger-role`。
+3. 将 `github-profile-codebuild-role` 的信任关系更新为
+   [构建角色回退信任策略](../infra/iam/codebuild-fallback-trust-policy.example.json)。它同时信任 CodeBuild 服务和
+   唯一的触发角色，不直接信任任意 GitHub 工作流。
+
+没有 Cloudflare 域名时，将 `PREVIEW_DOMAIN` 设置成 `preview.local`。它不是公共 DNS；工作流会在摘要中生成
+带 Host Header 的验证命令：
+
+```bash
+curl -H 'Host: pr-<编号>.preview.local' http://<共享ALB域名>/healthz
+```
+
+首次使用 GitHub Actions 回退路线：
+
+1. Actions → `PR preview shared base` → 保持 Branch 为 `main`，选择 `deploy`，创建共享 ALB 和 ECS 集群。
+2. 创建同仓库分支的 PR，`PR preview environment` 自动构建镜像并创建 PR Stack。
+3. 使用工作流摘要中的 `curl` 命令验收。
+4. 关闭 PR，等待 PR Stack 自动删除。
+5. Actions → `PR preview shared base` → 选择 `destroy`，停止共享 ALB 费用。
+
+删除共享 Base Stack 前必须先关闭所有预览 PR，否则 CloudFormation 导出仍被 PR Stack 引用，删除会失败。
+
 ## CodeBuild 手动配置
 
 在创建项目之前，先把 [部署权限示例](../infra/iam/pr-deploy-policy.example.json) 作为内联策略添加到

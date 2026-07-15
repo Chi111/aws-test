@@ -183,6 +183,9 @@ IAM examples are provided here:
 - `infra/iam/github-actions-trust-policy.example.json`
 - `infra/iam/github-actions-deploy-policy.example.json`
 - `infra/iam/cloud-map-deploy-policy.example.json`
+- `infra/iam/pr-trigger-fallback-policy.example.json`
+- `infra/iam/pr-trigger-fallback-trust-policy.example.json`
+- `infra/iam/codebuild-fallback-trust-policy.example.json`
 
 The deploy role needs permission to invoke the setup Lambda:
 

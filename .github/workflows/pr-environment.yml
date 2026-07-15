@@ -14,9 +14,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  preview:
+  codebuild:
     # Forked pull requests never receive AWS credentials.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.PR_EXECUTOR == 'codebuild'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -85,3 +85,136 @@ jobs:
       - name: Publish preview URL
         if: github.event.action != 'closed'
         run: printf '### Preview URL\n\nhttp://pr-%s.%s\n' "$PR_NUMBER" "$PREVIEW_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
+
+  github-actions:
+    # Temporary executor for accounts whose CodeBuild queue quota is zero.
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.PR_EXECUTOR != 'codebuild'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+      AWS_ACCOUNT_ID: "311816466050"
+      TRIGGER_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-pr-trigger-role
+      BUILD_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-codebuild-role
+      DEPLOY_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-pr-deploy-role
+      ECR_REPOSITORY_URI: 311816466050.dkr.ecr.us-east-2.amazonaws.com/github-profile-go
+      VPC_ID: vpc-0b653a19dd83dfa79
+      PUBLIC_SUBNET_IDS: subnet-0f1075ff3eaba752e,subnet-0afbf279c7e89bd2d,subnet-0af83aebdf25ab627
+      ECS_TASK_EXECUTION_ROLE_ARN: arn:aws:iam::311816466050:role/service-role/ecsTaskExecutionRole
+      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN || 'preview.local' }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+
+    steps:
+      - name: Configure trigger role through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.TRIGGER_ROLE_ARN }}
+          role-session-name: pr-${{ env.PR_NUMBER }}-trigger
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Chain into the existing build role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BUILD_ROLE_ARN }}
+          role-session-name: pr-${{ env.PR_NUMBER }}-build
+          role-chaining: true
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check out trusted deployment code from main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: control-source
+          fetch-depth: 1
+
+      - name: Check out the exact PR revision
+        if: github.event.action != 'closed'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: app-source
+          fetch-depth: 1
+
+      - name: Set up Go
+        if: github.event.action != 'closed'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: control-source/infra/cdk/pr-environment/go.mod
+          cache-dependency-path: control-source/infra/cdk/pr-environment/go.sum
+
+      - name: Set up Node.js
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Log in to ECR
+        if: github.event.action != 'closed'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push the PR image
+        if: github.event.action != 'closed'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_VERSION='${{ github.event.pull_request.head.sha }}'
+          SHORT_SHA="${SOURCE_VERSION:0:12}"
+          IMAGE_URI="${ECR_REPOSITORY_URI}:pr-${PR_NUMBER}-${SHORT_SHA}"
+          docker build \
+            --platform linux/amd64 \
+            -f app-source/apps/go-server/Dockerfile \
+            -t "$IMAGE_URI" \
+            app-source
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Chain into the preview deploy role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          role-session-name: pr-${{ env.PR_NUMBER }}-deploy
+          role-chaining: true
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy or destroy the PR stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          STACK_NAME="github-profile-pr-${PR_NUMBER}"
+
+          if [ '${{ github.event.action }}' = 'closed' ]; then
+            if aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>&1; then
+              aws cloudformation delete-stack --stack-name "$STACK_NAME"
+              aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+            else
+              echo "$STACK_NAME already absent"
+            fi
+            exit 0
+          fi
+
+          export DEPLOY_MODE=pr
+          cd control-source/infra/cdk/pr-environment
+          go test ./...
+          npx --yes aws-cdk@2.1130.0 synth "$STACK_NAME" --quiet
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file "cdk.out/${STACK_NAME}.template.json" \
+            --no-fail-on-empty-changeset \
+            --tags Project=github-profile-go Environment="pr-${PR_NUMBER}"
+
+      - name: Publish the no-domain verification command
+        if: github.event.action != 'closed'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name github-profile-preview-base \
+            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDNSName'].OutputValue | [0]" \
+            --output text)
+          {
+            echo '### PR preview verification'
+            echo
+            echo '```bash'
+            printf "curl -H 'Host: pr-%s.%s' http://%s/healthz\n" "$PR_NUMBER" "$PREVIEW_DOMAIN" "$ALB_DNS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
