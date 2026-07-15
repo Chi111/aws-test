@@ -6,7 +6,8 @@
 - 每个 PR：一个 Fargate 服务、任务定义、目标组、ALB 主机名规则、安全组和日志组。
 - PR 打开或更新：构建镜像并创建/更新 `github-profile-pr-<编号>`。
 - PR 关闭或合并：删除对应 CloudFormation 栈。
-- Cloudflare：只配置一次通配符 DNS，`pr-<编号>.preview.<域名>` 自动进入共享 ALB。
+- Cloudflare：Worker Static Assets 承载前端；每个 PR 上传一个不切换生产流量的 Worker Version，使用
+  `pr-<编号>-github-profile-sam-chi111.<子域>.workers.dev` 预览。
 
 ```mermaid
 flowchart LR
@@ -17,9 +18,28 @@ flowchart LR
   Deploy --> CFN["CloudFormation"]
   CFN --> Base["共享 ALB + ECS 集群"]
   CFN --> Preview["PR 专属 Fargate 服务"]
-  CF["Cloudflare 通配符 DNS"] --> Base
+  PR --> CF["Cloudflare Worker 前端预览"]
   Base --> Preview
 ```
+
+## Cloudflare Worker 前端预览
+
+Cloudflare 不需要自定义域名。生产前端使用 `github-profile-sam-chi111.<子域>.workers.dev`，PR 前端使用
+Worker Preview URL。仓库需要以下配置：
+
+| 类型 | 名称 | 用途 |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | 仅允许上传 Worker 版本 |
+| Secret | `CLOUDFLARE_ACCOUNT_ID` | 指定部署账户 |
+| Variable | `CLOUDFLARE_WORKER_NAME` | `github-profile-sam-chi111` |
+
+前端构建和 Cloudflare 上传被拆成两个 GitHub Actions Job。PR 代码所在的 Job 不接收 Token，只上传静态构建
+产物；第二个 Job 从可信 `main` 分支读取 [Wrangler 配置](../apps/web/wrangler.jsonc)，下载静态产物后才注入
+Token。这样 PR 构建脚本无法读取 Cloudflare 凭证。Fork PR 不运行 Cloudflare 部署。
+
+当前 Worker 预览前端使用仓库变量 `VITE_SERVER_URL` 指向共享 AWS API。PR 专属 Go 服务仍通过共享 ALB 的
+Host Header 单独验收；若要实现前端到 PR 后端的完全隔离，后续应为每个 PR 提供可由浏览器直接访问的 HTTPS
+API URL。
 
 ## 三个 IAM 角色为什么分开
 

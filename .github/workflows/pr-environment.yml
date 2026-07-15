@@ -14,6 +14,101 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cloudflare-preview-build:
+    # Never expose Cloudflare credentials to code from a fork.
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VITE_SERVER_URL: ${{ vars.VITE_SERVER_URL }}
+
+    steps:
+      - name: Check out the exact PR revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the PR frontend without deployment credentials
+        run: pnpm --filter web build
+
+      - name: Pass only static assets to the trusted deployment job
+        uses: actions/upload-artifact@v7
+        with:
+          name: cloudflare-preview-pr-${{ github.event.pull_request.number }}
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  cloudflare-preview-deploy:
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: cloudflare-preview-build
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+      CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN || 'chi435900020' }}
+
+    steps:
+      - name: Check out trusted deployment configuration from main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          path: control-source
+          fetch-depth: 1
+
+      - name: Download the isolated frontend artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: cloudflare-preview-pr-${{ github.event.pull_request.number }}
+          path: control-source/apps/web/dist
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Upload a version without changing production traffic
+        working-directory: control-source/apps/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PR_NUMBER" in
+            ''|*[!0-9]*)
+              echo "PR number must be numeric" >&2
+              exit 2
+              ;;
+          esac
+          test -n "$CLOUDFLARE_WORKER_NAME"
+          npx --yes wrangler@4.111.0 versions upload \
+            --preview-alias "pr-${PR_NUMBER}"
+
+          PREVIEW_URL="https://pr-${PR_NUMBER}-${CLOUDFLARE_WORKER_NAME}.${CLOUDFLARE_WORKERS_SUBDOMAIN}.workers.dev"
+          {
+            echo '### Cloudflare frontend preview'
+            echo
+            printf '[%s](%s)\n' "$PREVIEW_URL" "$PREVIEW_URL"
+            echo
+            echo 'The frontend currently uses the shared AWS API URL configured by VITE_SERVER_URL.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   codebuild:
     # Forked pull requests never receive AWS credentials.
     if: github.event.pull_request.head.repo.full_name == github.repository && vars.PR_EXECUTOR == 'codebuild'
