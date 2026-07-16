@@ -20,21 +20,21 @@ const (
 	exportLoadBalancerDNSName = "github-profile-preview-alb-dns-name"
 	exportVPCID               = "github-profile-preview-vpc-id"
 	exportPublicSubnetIDs     = "github-profile-preview-public-subnet-ids"
-	placeholderDatabaseURL    = "postgresql://preview:preview@database.invalid/github_profile?sslmode=require"
 	applicationContainerName  = "api"
 	applicationContainerPort  = 8080
 )
 
 type environmentConfig struct {
-	DeployMode           string
-	AccountID            string
-	Region               string
-	VPCID                string
-	PublicSubnetIDs      []string
-	PRNumber             int
-	ImageURI             string
-	PreviewDomain        string
-	TaskExecutionRoleARN string
+	DeployMode            string
+	AccountID             string
+	Region                string
+	VPCID                 string
+	PublicSubnetIDs       []string
+	PRNumber              int
+	ImageURI              string
+	TaskExecutionRoleARN  string
+	DatabaseSecretARN     string
+	AuroraSecurityGroupID string
 }
 
 func main() {
@@ -124,15 +124,15 @@ func loadEnvironment(lookup func(string) (string, bool)) (environmentConfig, err
 	if err != nil {
 		return environmentConfig{}, err
 	}
-	config.PreviewDomain, err = required("PREVIEW_DOMAIN")
+	config.TaskExecutionRoleARN, err = required("ECS_TASK_EXECUTION_ROLE_ARN")
 	if err != nil {
 		return environmentConfig{}, err
 	}
-	config.PreviewDomain = strings.TrimSuffix(config.PreviewDomain, ".")
-	if strings.Contains(config.PreviewDomain, "/") || !strings.Contains(config.PreviewDomain, ".") {
-		return environmentConfig{}, errors.New("PREVIEW_DOMAIN must be a DNS name such as preview.example.com")
+	config.DatabaseSecretARN, err = required("DATABASE_SECRET_ARN")
+	if err != nil {
+		return environmentConfig{}, err
 	}
-	config.TaskExecutionRoleARN, err = required("ECS_TASK_EXECUTION_ROLE_ARN")
+	config.AuroraSecurityGroupID, err = required("AURORA_SECURITY_GROUP_ID")
 	if err != nil {
 		return environmentConfig{}, err
 	}
@@ -220,7 +220,6 @@ func newPRStack(scope constructs.Construct, id string, props *awscdk.StackProps,
 	albSecurityGroupID := awscdk.Fn_ImportValue(jsii.String(exportLoadBalancerSGID))
 	clusterName := awscdk.Fn_ImportValue(jsii.String(exportClusterName))
 	listenerARN := awscdk.Fn_ImportValue(jsii.String(exportHTTPListenerARN))
-	previewHost := fmt.Sprintf("pr-%d.%s", config.PRNumber, config.PreviewDomain)
 	resourceName := fmt.Sprintf("github-profile-pr-%d", config.PRNumber)
 
 	serviceSecurityGroup := newResource(stack, "ServiceSecurityGroup", "AWS::EC2::SecurityGroup", map[string]interface{}{
@@ -238,6 +237,15 @@ func newPRStack(scope constructs.Construct, id string, props *awscdk.StackProps,
 			map[string]interface{}{"IpProtocol": "-1", "CidrIp": "0.0.0.0/0"},
 		},
 		"Tags": resourceTags(resourceName),
+	})
+
+	newResource(stack, "AuroraIngressFromPreviewService", "AWS::EC2::SecurityGroupIngress", map[string]interface{}{
+		"GroupId":               config.AuroraSecurityGroupID,
+		"IpProtocol":            "tcp",
+		"FromPort":              5432,
+		"ToPort":                5432,
+		"SourceSecurityGroupId": serviceSecurityGroup.Ref(),
+		"Description":           fmt.Sprintf("Allow PR %d Go service to read PostgreSQL", config.PRNumber),
 	})
 
 	logGroup := newResource(stack, "ApplicationLogGroup", "AWS::Logs::LogGroup", map[string]interface{}{
@@ -262,9 +270,12 @@ func newPRStack(scope constructs.Construct, id string, props *awscdk.StackProps,
 				"Name":      applicationContainerName,
 				"Image":     config.ImageURI,
 				"Essential": true,
+				"Secrets": []interface{}{
+					map[string]interface{}{"Name": "DATABASE_URL", "ValueFrom": config.DatabaseSecretARN},
+				},
 				"Environment": []interface{}{
-					map[string]interface{}{"Name": "DATABASE_URL", "Value": placeholderDatabaseURL},
 					map[string]interface{}{"Name": "CORS_ORIGIN", "Value": "*"},
+					map[string]interface{}{"Name": "DATABASE_SSL_CA_PATH", "Value": "/etc/ssl/certs/aws-rds-global-bundle.pem"},
 				},
 				"PortMappings": []interface{}{
 					map[string]interface{}{"ContainerPort": applicationContainerPort, "Protocol": "tcp"},
@@ -330,14 +341,17 @@ func newPRStack(scope constructs.Construct, id string, props *awscdk.StackProps,
 		"Tags":        resourceTags(resourceName),
 	})
 
-	listenerRule := newResource(stack, "HostListenerRule", "AWS::ElasticLoadBalancingV2::ListenerRule", map[string]interface{}{
+	listenerRule := newResource(stack, "PreviewHeaderListenerRule", "AWS::ElasticLoadBalancingV2::ListenerRule", map[string]interface{}{
 		"Actions": []interface{}{
 			map[string]interface{}{"Type": "forward", "TargetGroupArn": targetGroup.Ref()},
 		},
 		"Conditions": []interface{}{
 			map[string]interface{}{
-				"Field":            "host-header",
-				"HostHeaderConfig": map[string]interface{}{"Values": []interface{}{previewHost}},
+				"Field": "http-header",
+				"HttpHeaderConfig": map[string]interface{}{
+					"HttpHeaderName": "X-Preview-PR",
+					"Values":         []interface{}{strconv.Itoa(config.PRNumber)},
+				},
 			},
 		},
 		"ListenerArn": listenerARN,
@@ -345,7 +359,6 @@ func newPRStack(scope constructs.Construct, id string, props *awscdk.StackProps,
 	})
 	service.AddDependency(listenerRule)
 
-	newExport(stack, "PreviewURL", jsii.String("http://"+previewHost), fmt.Sprintf("github-profile-pr-%d-url", config.PRNumber))
 	return stack
 }
 

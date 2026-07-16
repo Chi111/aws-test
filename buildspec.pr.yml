@@ -81,10 +81,12 @@ phases:
 
         if [ "$PR_ACTION" = "deploy" ]; then
           : "${ECR_REPOSITORY_URI:?ECR_REPOSITORY_URI is required}"
-          : "${PREVIEW_DOMAIN:?PREVIEW_DOMAIN is required}"
           : "${ECS_TASK_EXECUTION_ROLE_ARN:?ECS_TASK_EXECUTION_ROLE_ARN is required}"
+          : "${DATABASE_SECRET_ARN:?DATABASE_SECRET_ARN is required}"
+          : "${AURORA_SECURITY_GROUP_ID:?AURORA_SECURITY_GROUP_ID is required}"
+          : "${PREVIEW_TEST_USERNAME:=Chi111}"
           SHORT_SHA=$(printf '%s' "$SOURCE_VERSION" | cut -c1-12)
-          IMAGE_URI="${ECR_REPOSITORY_URI}:pr-${PR_NUMBER}-${SHORT_SHA}"
+          IMAGE_URI="${ECR_REPOSITORY_URI}:pr-${PR_NUMBER}-${SHORT_SHA}-build-${CODEBUILD_BUILD_NUMBER}"
           export IMAGE_URI
           aws ecr get-login-password --region "$AWS_REGION" |
             docker login --username AWS --password-stdin "${ECR_REPOSITORY_URI%%/*}"
@@ -120,8 +122,9 @@ phases:
             docker push "$IMAGE_URI"
 
             export DEPLOY_MODE=pr
-            export PR_NUMBER IMAGE_URI PREVIEW_DOMAIN AWS_ACCOUNT_ID AWS_REGION
+            export PR_NUMBER IMAGE_URI AWS_ACCOUNT_ID AWS_REGION
             export VPC_ID PUBLIC_SUBNET_IDS ECS_TASK_EXECUTION_ROLE_ARN
+            export DATABASE_SECRET_ARN AURORA_SECURITY_GROUP_ID
             STACK_NAME="github-profile-pr-${PR_NUMBER}"
             ;;
           destroy)

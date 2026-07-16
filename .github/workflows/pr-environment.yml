@@ -22,7 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      VITE_SERVER_URL: ${{ vars.VITE_SERVER_URL }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+      CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN || 'chi435900020' }}
 
     steps:
       - name: Check out the exact PR revision
@@ -41,6 +43,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Point the frontend at its same-origin PR Worker gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_WORKER_NAME"
+          PREVIEW_URL="https://pr-${PR_NUMBER}-${CLOUDFLARE_WORKER_NAME}.${CLOUDFLARE_WORKERS_SUBDOMAIN}.workers.dev"
+          echo "VITE_SERVER_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+
       - name: Build the PR frontend without deployment credentials
         run: pnpm --filter web build
 
@@ -54,7 +64,7 @@ jobs:
 
   cloudflare-preview-deploy:
     if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    needs: cloudflare-preview-build
+    needs: [cloudflare-preview-build, preview-backend-ready]
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -63,6 +73,8 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
       CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN || 'chi435900020' }}
+      PR_BACKEND_URL: ${{ vars.PR_PREVIEW_ALB_URL }}
+      PREVIEW_TEST_USERNAME: ${{ vars.PREVIEW_TEST_USERNAME || 'Chi111' }}
 
     steps:
       - name: Check out trusted deployment configuration from main
@@ -97,16 +109,43 @@ jobs:
               ;;
           esac
           test -n "$CLOUDFLARE_WORKER_NAME"
+          test -n "$PR_BACKEND_URL"
           npx --yes wrangler@4.111.0 versions upload \
-            --preview-alias "pr-${PR_NUMBER}"
+            --preview-alias "pr-${PR_NUMBER}" \
+            --var "PR_BACKEND_URL:${PR_BACKEND_URL}" \
+            --var "PR_NUMBER:${PR_NUMBER}"
 
           PREVIEW_URL="https://pr-${PR_NUMBER}-${CLOUDFLARE_WORKER_NAME}.${CLOUDFLARE_WORKERS_SUBDOMAIN}.workers.dev"
+          for attempt in $(seq 1 10); do
+            if RESPONSE=$(curl --fail --silent --show-error \
+              "${PREVIEW_URL}/api/go/introductions/${PREVIEW_TEST_USERNAME}"); then
+              break
+            fi
+            if [ "$attempt" -eq 10 ]; then
+              echo "Cloudflare preview alias never became ready" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+          printf '%s' "$RESPONSE" | node -e '
+            let body = "";
+            process.stdin.on("data", chunk => body += chunk);
+            process.stdin.on("end", () => {
+              const value = JSON.parse(body);
+              if (!value.introduction ||
+                  value.preview?.prNumber !== Number(process.env.PR_NUMBER) ||
+                  value.preview?.service !== "github-profile-go" ||
+                  value.preview?.runtime !== "go") {
+                process.exit(1);
+              }
+            });
+          '
           {
             echo '### Cloudflare frontend preview'
             echo
             printf '[%s](%s)\n' "$PREVIEW_URL" "$PREVIEW_URL"
             echo
-            echo 'The frontend currently uses the shared AWS API URL configured by VITE_SERVER_URL.'
+            echo 'This frontend calls the PR-specific ECS Go service through the Worker and shared ALB.'
           } >> "$GITHUB_STEP_SUMMARY"
 
   codebuild:
@@ -119,7 +158,6 @@ jobs:
       CODEBUILD_PROJECT: github-profile-pr-environment
       TRIGGER_ROLE_ARN: arn:aws:iam::311816466050:role/github-profile-pr-trigger-role
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
 
     steps:
       - name: Configure temporary AWS credentials through OIDC
@@ -177,10 +215,6 @@ jobs:
             esac
           done
 
-      - name: Publish preview URL
-        if: github.event.action != 'closed'
-        run: printf '### Preview URL\n\nhttp://pr-%s.%s\n' "$PR_NUMBER" "$PREVIEW_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
-
   github-actions:
     # Temporary executor for accounts whose CodeBuild queue quota is zero.
     if: github.event.pull_request.head.repo.full_name == github.repository && vars.PR_EXECUTOR != 'codebuild'
@@ -196,7 +230,9 @@ jobs:
       VPC_ID: vpc-0b653a19dd83dfa79
       PUBLIC_SUBNET_IDS: subnet-0f1075ff3eaba752e,subnet-0afbf279c7e89bd2d,subnet-0af83aebdf25ab627
       ECS_TASK_EXECUTION_ROLE_ARN: arn:aws:iam::311816466050:role/service-role/ecsTaskExecutionRole
-      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN || 'preview.local' }}
+      DATABASE_SECRET_ARN: ${{ vars.PR_DATABASE_SECRET_ARN }}
+      AURORA_SECURITY_GROUP_ID: ${{ vars.AURORA_SECURITY_GROUP_ID }}
+      PREVIEW_TEST_USERNAME: ${{ vars.PREVIEW_TEST_USERNAME || 'Chi111' }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
 
     steps:
@@ -302,19 +338,66 @@ jobs:
             --no-fail-on-empty-changeset \
             --tags Project=github-profile-go Environment="pr-${PR_NUMBER}"
 
-      - name: Publish the no-domain verification command
-        if: github.event.action != 'closed'
+  preview-backend-ready:
+    if: >-
+      always() &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: [codebuild, github-actions]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_BACKEND_URL: ${{ vars.PR_PREVIEW_ALB_URL }}
+      PREVIEW_TEST_USERNAME: ${{ vars.PREVIEW_TEST_USERNAME || 'Chi111' }}
+    steps:
+      - name: Require one trusted AWS executor to succeed
         shell: bash
         run: |
           set -euo pipefail
-          ALB_DNS=$(aws cloudformation describe-stacks \
-            --stack-name github-profile-preview-base \
-            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDNSName'].OutputValue | [0]" \
-            --output text)
+          if [ '${{ needs.codebuild.result }}' != 'success' ] &&
+             [ '${{ needs.github-actions.result }}' != 'success' ]; then
+            echo "Neither CodeBuild nor the GitHub Actions fallback deployed the PR backend" >&2
+            exit 1
+          fi
+
+      - name: Prove ECS readiness and the PostgreSQL business query
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PR_BACKEND_URL"
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error \
+              -H "X-Preview-PR: ${PR_NUMBER}" \
+              "${PR_BACKEND_URL}/readyz" >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "PR Go service never became database-ready" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          RESPONSE=$(curl --fail --silent --show-error \
+            -H "X-Preview-PR: ${PR_NUMBER}" \
+            "${PR_BACKEND_URL}/api/v1/introductions/${PREVIEW_TEST_USERNAME}")
+          printf '%s' "$RESPONSE" | node -e '
+            let body = "";
+            process.stdin.on("data", chunk => body += chunk);
+            process.stdin.on("end", () => {
+              const value = JSON.parse(body);
+              if (!value.introduction ||
+                  value.profile?.login?.toLowerCase() !== process.env.PREVIEW_TEST_USERNAME.toLowerCase()) {
+                process.exit(1);
+              }
+            });
+          '
+
           {
-            echo '### PR preview verification'
+            echo '### PR backend verified'
             echo
-            echo '```bash'
-            printf "curl -H 'Host: pr-%s.%s' http://%s/healthz\n" "$PR_NUMBER" "$PREVIEW_DOMAIN" "$ALB_DNS"
-            echo '```'
+            echo '- ECS readiness: passed'
+            echo '- PostgreSQL introduction query: passed'
+            printf -- '- Routing header: `X-Preview-PR: %s`\n' "$PR_NUMBER"
           } >> "$GITHUB_STEP_SUMMARY"
