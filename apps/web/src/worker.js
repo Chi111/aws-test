@@ -52,6 +52,12 @@ export default {
   async fetch(request, env) {
     const previewResponse = await proxyPreview(request, env);
     if (previewResponse) return previewResponse;
+
+    const incoming = new URL(request.url);
+    if (incoming.pathname.startsWith("/api/")) {
+      return Response.json({ error: "API route is not available in this PR preview" }, { status: 404 });
+    }
+
     return env.ASSETS.fetch(request);
   },
 };

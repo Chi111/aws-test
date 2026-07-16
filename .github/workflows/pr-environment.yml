@@ -63,7 +63,15 @@ jobs:
           retention-days: 1
 
   cloudflare-preview-deploy:
-    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    # preview-backend-ready intentionally depends on one skipped executor
+    # (CodeBuild or the Actions fallback). Use always() here so that transitive
+    # skip does not suppress this job after both direct dependencies succeed.
+    if: >-
+      always() &&
+      needs.cloudflare-preview-build.result == 'success' &&
+      needs.preview-backend-ready.result == 'success' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     needs: [cloudflare-preview-build, preview-backend-ready]
     permissions:
       contents: read
@@ -133,6 +141,9 @@ jobs:
             process.stdin.on("end", () => {
               const value = JSON.parse(body);
               if (!value.introduction ||
+                  value.backendProof?.service !== "github-profile-go" ||
+                  value.backendProof?.runtime !== "go" ||
+                  value.backendProof?.dataSource !== "postgresql" ||
                   value.preview?.prNumber !== Number(process.env.PR_NUMBER) ||
                   value.preview?.service !== "github-profile-go" ||
                   value.preview?.runtime !== "go") {
@@ -388,6 +399,9 @@ jobs:
             process.stdin.on("end", () => {
               const value = JSON.parse(body);
               if (!value.introduction ||
+                  value.backendProof?.service !== "github-profile-go" ||
+                  value.backendProof?.runtime !== "go" ||
+                  value.backendProof?.dataSource !== "postgresql" ||
                   value.profile?.login?.toLowerCase() !== process.env.PREVIEW_TEST_USERNAME.toLowerCase()) {
                 process.exit(1);
               }
