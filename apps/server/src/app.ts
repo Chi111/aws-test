@@ -34,6 +34,25 @@ const fieldSchema = z.object({
   fieldValue: z.string().trim().min(1).max(2000)
 });
 
+const githubUsernameSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/);
+
+const goIntroductionSchema = z.object({
+  profile: z.object({
+    githubId: z.string(),
+    login: z.string(),
+    name: z.string().nullable(),
+    avatarUrl: z.string().nullable(),
+    htmlUrl: z.url(),
+    publicRepos: z.number().int().nonnegative(),
+    followers: z.number().int().nonnegative(),
+    following: z.number().int().nonnegative()
+  }),
+  introduction: z.string().min(1)
+});
+
 function publicUser(user: SessionUser) {
   return {
     id: user.id,
@@ -138,6 +157,48 @@ export function createApp(options: CreateAppOptions = {}) {
       return c.json({ discovery: "cloud-map", service: health.service, status: health.status });
     } catch {
       return c.json({ error: "Go service is unavailable" }, 503);
+    }
+  });
+
+  app.get("/api/go/introductions/:username", async (c) => {
+    if (!goServiceBaseUrl) {
+      return c.json({ error: "Go service discovery is not configured" }, 503);
+    }
+
+    const username = githubUsernameSchema.safeParse(c.req.param("username"));
+    if (!username.success) {
+      return c.json({ error: "GitHub username is invalid" }, 400);
+    }
+
+    try {
+      const introductionUrl = new URL(
+        `/api/v1/introductions/${encodeURIComponent(username.data)}`,
+        `${goServiceBaseUrl.replace(/\/$/, "")}/`
+      );
+      const response = await fetchGoService(introductionUrl, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(3000)
+      });
+      const body = (await response.json().catch(() => null)) as unknown;
+
+      if (response.status === 400 || response.status === 404) {
+        const upstreamError = z
+          .object({ error: z.object({ message: z.string().min(1) }) })
+          .safeParse(body);
+        const message = upstreamError.success ? upstreamError.data.error.message : "Profile could not be loaded";
+        return response.status === 400 ? c.json({ error: message }, 400) : c.json({ error: message }, 404);
+      }
+      if (!response.ok) {
+        return c.json({ error: "Go profile service is temporarily unavailable" }, 503);
+      }
+
+      const result = goIntroductionSchema.safeParse(body);
+      if (!result.success) {
+        return c.json({ error: "Go profile service returned an invalid response" }, 502);
+      }
+      return c.json(result.data);
+    } catch {
+      return c.json({ error: "Go profile service is temporarily unavailable" }, 503);
     }
   });
 

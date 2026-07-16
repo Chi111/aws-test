@@ -189,4 +189,74 @@ describe("admin MVP API", () => {
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({ error: "Go service returned an invalid health response" });
   });
+
+  it("returns a generated introduction through the Go service", async () => {
+    const fetchGoService = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe("http://go.internal.github-profile:8080/api/v1/introductions/Chi111");
+      return new Response(
+        JSON.stringify({
+          profile: {
+            githubId: "123",
+            login: "chi111",
+            name: "Chi",
+            avatarUrl: "https://avatars.githubusercontent.com/u/123",
+            htmlUrl: "https://github.com/Chi111",
+            publicRepos: 8,
+            followers: 12,
+            following: 3
+          },
+          introduction: "你好，我是 Chi（GitHub: @chi111）。"
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    const app = createApp({
+      repository: await createRepo(),
+      fetchGoService,
+      goServiceBaseUrl: "http://go.internal.github-profile:8080"
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/go/introductions/Chi111"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      profile: { login: "chi111", publicRepos: 8 },
+      introduction: "你好，我是 Chi（GitHub: @chi111）。"
+    });
+    expect(fetchGoService).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an invalid username without calling the Go service", async () => {
+    const fetchGoService = vi.fn();
+    const app = createApp({
+      repository: await createRepo(),
+      fetchGoService,
+      goServiceBaseUrl: "http://go.internal.github-profile:8080"
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/go/introductions/-invalid"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "GitHub username is invalid" });
+    expect(fetchGoService).not.toHaveBeenCalled();
+  });
+
+  it("preserves a sanitized profile-not-found response from Go", async () => {
+    const fetchGoService = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ error: { code: "profile_not_found", message: "GitHub profile was not found" } }),
+        { status: 404, headers: { "content-type": "application/json" } }
+      )
+    );
+    const app = createApp({
+      repository: await createRepo(),
+      fetchGoService,
+      goServiceBaseUrl: "http://go.internal.github-profile:8080"
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/go/introductions/missing"));
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "GitHub profile was not found" });
+  });
 });

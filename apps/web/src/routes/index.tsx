@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Activity, GitBranch, KeyRound, Lock, LogOut, Plus, Shield, Trash2, UserRound } from "lucide-react";
+import { Activity, ExternalLink, GitBranch, KeyRound, Lock, LogOut, Plus, Search, Shield, Sparkles, Trash2, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { env } from "@github-profile-sam/env/web";
 
@@ -20,7 +20,8 @@ type Profile = {
   following: number;
 };
 type Field = { id: string; githubId: string; fieldKey: string; fieldValue: string; createdAt: string };
-type View = "dashboard" | "profiles" | "fields" | "access";
+type IntroductionResult = { profile: Profile; introduction: string };
+type View = "dashboard" | "introduction" | "profiles" | "fields" | "access";
 
 const apiBase = env.VITE_SERVER_URL.replace(/\/+$/, "");
 
@@ -110,6 +111,9 @@ function AdminApp() {
           <NavButton active={view === "dashboard"} onClick={() => setView("dashboard")} icon={<Activity />}>
             Dashboard
           </NavButton>
+          <NavButton active={view === "introduction"} onClick={() => setView("introduction")} icon={<Sparkles />}>
+            Go Introduction
+          </NavButton>
           <NavButton active={view === "profiles"} onClick={() => setView("profiles")} icon={<GitBranch />}>
             GitHub Profiles
           </NavButton>
@@ -149,6 +153,7 @@ function AdminApp() {
         {error ? <p className="banner error">{error}</p> : null}
         {status ? <p className="banner success">{status}</p> : null}
         {view === "dashboard" ? <Dashboard user={user} profiles={profiles} /> : null}
+        {view === "introduction" ? <IntroductionLookup /> : null}
         {view === "profiles" ? (
           <ProfilesView
             canWrite={user.canWrite}
@@ -201,30 +206,121 @@ function LoginView({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="login-screen">
-      <form className="login-panel" onSubmit={submit}>
-        <div className="brand">
-          <Shield aria-hidden="true" />
-          <div>
-            <strong>GitHub Profile Admin</strong>
-            <span>better-t-stack MVP</span>
+      <div className="entry-grid">
+        <IntroductionLookup />
+        <form className="login-panel" onSubmit={submit}>
+          <div className="brand">
+            <Shield aria-hidden="true" />
+            <div>
+              <strong>GitHub Profile Admin</strong>
+              <span>better-t-stack MVP</span>
+            </div>
           </div>
-        </div>
-        <label>
-          Email
-          <input value={email} onChange={(event) => setEmail(event.target.value)} />
-        </label>
-        <label>
-          Password
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        </label>
-        <button className="primary-button" type="submit">
-          <KeyRound aria-hidden="true" />
-          Login
-        </button>
-        {error ? <p className="banner error">{error}</p> : null}
-        <p className="hint">Try admin@example.com, operator@example.com, or viewer@example.com.</p>
-      </form>
+          <label>
+            Email
+            <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
+          </label>
+          <label>
+            Password
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+          </label>
+          <button className="primary-button" type="submit">
+            <KeyRound aria-hidden="true" />
+            Login
+          </button>
+          {error ? <p className="banner error" role="alert">{error}</p> : null}
+          <p className="hint">Try admin@example.com, operator@example.com, or viewer@example.com.</p>
+        </form>
+      </div>
     </main>
+  );
+}
+
+function IntroductionLookup() {
+  const [username, setUsername] = useState("Chi111");
+  const [result, setResult] = useState<IntroductionResult | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const normalizedUsername = username.trim();
+    setError("");
+    setResult(null);
+
+    if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/.test(normalizedUsername)) {
+      setError("Enter a valid GitHub username (1–39 characters).");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const nextResult = await api<IntroductionResult>(
+        `/api/go/introductions/${encodeURIComponent(normalizedUsername)}`
+      );
+      setResult(nextResult);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Introduction could not be generated");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="introduction-panel" aria-labelledby="go-introduction-title">
+      <div className="introduction-heading">
+        <span className="eyebrow">Go · ECS Fargate · Cloud Map</span>
+        <h1 id="go-introduction-title">Generate a personal introduction</h1>
+        <p>Enter a profile already saved in PostgreSQL. The request reaches the private Go service through Lambda service discovery.</p>
+      </div>
+
+      <form className="introduction-form" onSubmit={submit}>
+        <label htmlFor="github-username">GitHub username</label>
+        <div className="introduction-controls">
+          <input
+            id="github-username"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            placeholder="Chi111"
+            autoComplete="off"
+            maxLength={39}
+            aria-describedby="introduction-help"
+          />
+          <button className="primary-button" type="submit" disabled={loading || !username.trim()}>
+            <Search aria-hidden="true" />
+            {loading ? "Generating…" : "Generate"}
+          </button>
+        </div>
+        <span className="hint" id="introduction-help">The GitHub token stays in the Node service and is never sent to Go.</span>
+      </form>
+
+      {error ? <p className="banner error" role="alert">{error}</p> : null}
+      {result ? (
+        <article className="introduction-result" aria-live="polite">
+          <div className="introduction-profile">
+            {result.profile.avatarUrl ? (
+              <img src={result.profile.avatarUrl} alt={`${result.profile.login} avatar`} />
+            ) : (
+              <div className="avatar-placeholder" aria-hidden="true" />
+            )}
+            <div>
+              <span className="eyebrow">generated by Go</span>
+              <h2>{result.profile.name ?? result.profile.login}</h2>
+              <a href={result.profile.htmlUrl} target="_blank" rel="noreferrer">
+                @{result.profile.login}
+                <ExternalLink aria-hidden="true" />
+              </a>
+            </div>
+          </div>
+          <p className="introduction-copy">{result.introduction}</p>
+          <dl className="introduction-metrics">
+            <div><dt>Repositories</dt><dd>{result.profile.publicRepos}</dd></div>
+            <div><dt>Followers</dt><dd>{result.profile.followers}</dd></div>
+            <div><dt>Following</dt><dd>{result.profile.following}</dd></div>
+          </dl>
+        </article>
+      ) : null}
+    </section>
   );
 }
 
@@ -417,6 +513,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 }
 
 function viewTitle(view: View) {
+  if (view === "introduction") return "Go Introduction";
   if (view === "profiles") return "GitHub Profiles";
   if (view === "fields") return "Custom Fields";
   if (view === "access") return "Access";
