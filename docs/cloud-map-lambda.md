@@ -26,6 +26,7 @@ Service 作为公网灰度入口，并使用同一 ECR 镜像和任务定义创�
 - Lambda 只调用固定的 `/healthz`，不会代理用户提供的 URL 或路径。
 - 请求超时为 3 秒，上游错误不会把内部 DNS 或异常信息返回给客户端。
 - Go 服务安全组的 8080 端口只允许 Lambda 安全组进入。
+- Aurora 的 5432 端口只允许 Lambda 安全组和 Go ECS 安全组进入。
 - Lambda 使用 DNS 查询，不需要 `servicediscovery:DiscoverInstances` IAM 权限。
 
 ## 部署前配置
