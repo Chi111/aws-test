@@ -299,6 +299,17 @@ Resources:
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
       Description: Allow MVP Lambda to connect to existing Aurora PostgreSQL.
 
+  AuroraIngressFromGoService:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateCloudMapIntegration
+    Properties:
+      GroupId: !Ref AuroraSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref GoServiceSecurityGroupId
+      Description: Allow the private ECS Go service to connect to Aurora PostgreSQL.
+
   ApiFunction:
     Type: AWS::Serverless::Function
     Properties:

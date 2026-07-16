@@ -136,3 +136,17 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='WebBucketName'].OutputValue" \
             --output text)
           aws s3 sync apps/web/dist "s3://$WEB_BUCKET" --delete
+
+      - name: Deploy production Cloudflare Worker
+        working-directory: apps/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_WORKER_NAME"
+          npx --yes wrangler@4.111.0 deploy --name "$CLOUDFLARE_WORKER_NAME"
