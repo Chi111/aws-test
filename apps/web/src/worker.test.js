@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { previewTarget, proxyPreview } from "./worker.js";
+import worker, { previewTarget, proxyPreview } from "./worker.js";
 
 test("maps only the two supported Go preview routes", () => {
   assert.equal(previewTarget("/api/go/health"), "/healthz");
@@ -57,4 +57,28 @@ test("does not become an arbitrary origin proxy", async () => {
     fetcher,
   );
   assert.equal(response, null);
+});
+
+test("returns JSON 404 for unsupported API routes instead of the SPA shell", async () => {
+  let assetsCalled = false;
+  const response = await worker.fetch(
+    new Request("https://pr.example/api/auth/me"),
+    {
+      PR_BACKEND_URL: "http://preview-alb.example",
+      PR_NUMBER: "5",
+      ASSETS: {
+        fetch() {
+          assetsCalled = true;
+          return new Response("<html>SPA shell</html>");
+        },
+      },
+    },
+  );
+
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.deepEqual(await response.json(), {
+    error: "API route is not available in this PR preview",
+  });
+  assert.equal(assetsCalled, false);
 });
