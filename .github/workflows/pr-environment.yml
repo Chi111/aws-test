@@ -133,6 +133,9 @@ jobs:
             process.stdin.on("end", () => {
               const value = JSON.parse(body);
               if (!value.introduction ||
+                  value.backendProof?.service !== "github-profile-go" ||
+                  value.backendProof?.runtime !== "go" ||
+                  value.backendProof?.dataSource !== "postgresql" ||
                   value.preview?.prNumber !== Number(process.env.PR_NUMBER) ||
                   value.preview?.service !== "github-profile-go" ||
                   value.preview?.runtime !== "go") {
@@ -388,6 +391,9 @@ jobs:
             process.stdin.on("end", () => {
               const value = JSON.parse(body);
               if (!value.introduction ||
+                  value.backendProof?.service !== "github-profile-go" ||
+                  value.backendProof?.runtime !== "go" ||
+                  value.backendProof?.dataSource !== "postgresql" ||
                   value.profile?.login?.toLowerCase() !== process.env.PREVIEW_TEST_USERNAME.toLowerCase()) {
                 process.exit(1);
               }

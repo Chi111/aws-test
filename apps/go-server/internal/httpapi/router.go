@@ -80,6 +80,11 @@ func (handler *Handler) generateIntroduction(response http.ResponseWriter, reque
 			Following:   result.Profile.Following,
 		},
 		Introduction: result.Introduction,
+		BackendProof: backendProof{
+			Service:    "github-profile-go",
+			Runtime:    "go",
+			DataSource: "postgresql",
+		},
 	})
 }
 
@@ -113,6 +118,13 @@ type profileResponse struct {
 type introductionResponse struct {
 	Profile      profileResponse `json:"profile"`
 	Introduction string          `json:"introduction"`
+	BackendProof backendProof    `json:"backendProof"`
+}
+
+type backendProof struct {
+	Service    string `json:"service"`
+	Runtime    string `json:"runtime"`
+	DataSource string `json:"dataSource"`
 }
 
 type errorResponse struct {

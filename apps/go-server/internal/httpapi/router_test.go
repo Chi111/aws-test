@@ -102,6 +102,13 @@ func TestIntroductionResponse(t *testing.T) {
 	if body["introduction"] == "" {
 		t.Fatal("introduction was empty")
 	}
+	proof, ok := body["backendProof"].(map[string]any)
+	if !ok ||
+		proof["service"] != "github-profile-go" ||
+		proof["runtime"] != "go" ||
+		proof["dataSource"] != "postgresql" {
+		t.Fatalf("unexpected backend proof: %#v", body["backendProof"])
+	}
 }
 
 func TestIntroductionErrors(t *testing.T) {
