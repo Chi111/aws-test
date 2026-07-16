@@ -19,11 +19,6 @@ test("adds routing proof to a PR introduction response", async () => {
       return Response.json({
         profile: { login: "Chi111" },
         introduction: "你好，我是 Chi111。",
-        backendProof: {
-          service: "github-profile-go",
-          runtime: "go",
-          dataSource: "postgresql",
-        },
       });
     },
   );
@@ -33,11 +28,6 @@ test("adds routing proof to a PR introduction response", async () => {
   assert.deepEqual(await response.json(), {
     profile: { login: "Chi111" },
     introduction: "你好，我是 Chi111。",
-    backendProof: {
-      service: "github-profile-go",
-      runtime: "go",
-      dataSource: "postgresql",
-    },
     preview: {
       prNumber: 5,
       runtime: "go",
