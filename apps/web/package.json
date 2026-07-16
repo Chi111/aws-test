@@ -8,6 +8,7 @@
     "build": "vite build",
     "serve": "vite preview",
     "start": "vite",
+    "test": "node --test src/worker.test.js",
     "check-types": "vite build && tsc --noEmit"
   },
   "dependencies": {

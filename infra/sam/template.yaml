@@ -360,6 +360,13 @@ Resources:
       Policies:
         - AWSLambdaBasicExecutionRole
         - AWSLambdaVPCAccessExecutionRole
+        - Statement:
+            - Sid: ManageOnlyPreviewDatabaseSecret
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:PutSecretValue
+              Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github-profile/pr-database-url-*"
 
   WebBucket:
     Type: AWS::S3::Bucket

@@ -20,7 +20,11 @@ type Profile = {
   following: number;
 };
 type Field = { id: string; githubId: string; fieldKey: string; fieldValue: string; createdAt: string };
-type IntroductionResult = { profile: Profile; introduction: string };
+type IntroductionResult = {
+  profile: Profile;
+  introduction: string;
+  preview?: { prNumber: number; runtime: string; service: string; routing: string };
+};
 type View = "dashboard" | "introduction" | "profiles" | "fields" | "access";
 
 const apiBase = env.VITE_SERVER_URL.replace(/\/+$/, "");
@@ -313,6 +317,11 @@ function IntroductionLookup() {
             </div>
           </div>
           <p className="introduction-copy">{result.introduction}</p>
+          {result.preview ? (
+            <p className="preview-proof">
+              PR #{result.preview.prNumber} · {result.preview.service} · {result.preview.runtime} · {result.preview.routing}
+            </p>
+          ) : null}
           <dl className="introduction-metrics">
             <div><dt>Repositories</dt><dd>{result.profile.publicRepos}</dd></div>
             <div><dt>Followers</dt><dd>{result.profile.followers}</dd></div>

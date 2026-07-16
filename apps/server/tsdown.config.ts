@@ -6,6 +6,7 @@ export default defineConfig({
   outDir: "./dist",
   clean: true,
   noExternal: [
+    /^@aws-sdk\/client-secrets-manager(\/.*)?$/,
     /@github-profile-sam\/.*/,
     /^@hono\/node-server(\/.*)?$/,
     /^dotenv(\/.*)?$/,

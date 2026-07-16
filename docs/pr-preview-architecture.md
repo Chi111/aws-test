@@ -3,7 +3,7 @@
 这套方案的目标不是让每个 PR 复制一整套昂贵的基础设施，而是共享入口、隔离运行单元：
 
 - 常驻资源：一个 ALB、一个 ECS 集群。
-- 每个 PR：一个 Fargate 服务、任务定义、目标组、ALB 主机名规则、安全组和日志组。
+- 每个 PR：一个 Fargate 服务、任务定义、目标组、ALB 请求头规则、安全组和日志组。
 - PR 打开或更新：构建镜像并创建/更新 `github-profile-pr-<编号>`。
 - PR 关闭或合并：删除对应 CloudFormation 栈。
 - Cloudflare：Worker Static Assets 承载前端；每个 PR 上传一个不切换生产流量的 Worker Version，使用
@@ -18,8 +18,10 @@ flowchart LR
   Deploy --> CFN["CloudFormation"]
   CFN --> Base["共享 ALB + ECS 集群"]
   CFN --> Preview["PR 专属 Fargate 服务"]
-  PR --> CF["Cloudflare Worker 前端预览"]
+  PR --> CF["Cloudflare Worker 前端预览 + HTTPS API 网关"]
+  CF -->|"X-Preview-PR"| Base
   Base --> Preview
+  Preview -->|"只读账号"| DB["PostgreSQL github_profiles"]
 ```
 
 ## Cloudflare Worker 前端预览
@@ -37,9 +39,10 @@ Worker Preview URL。仓库需要以下配置：
 产物；第二个 Job 从可信 `main` 分支读取 [Wrangler 配置](../apps/web/wrangler.jsonc)，下载静态产物后才注入
 Token。这样 PR 构建脚本无法读取 Cloudflare 凭证。Fork PR 不运行 Cloudflare 部署。
 
-当前 Worker 预览前端使用仓库变量 `VITE_SERVER_URL` 指向共享 AWS API。PR 专属 Go 服务仍通过共享 ALB 的
-Host Header 单独验收；若要实现前端到 PR 后端的完全隔离，后续应为每个 PR 提供可由浏览器直接访问的 HTTPS
-API URL。
+PR 构建会把 `VITE_SERVER_URL` 设置成自身 Worker Preview URL。Worker 只代理
+`/api/go/health` 和 `/api/go/introductions/<username>`，把请求改写到共享 ALB，并添加
+`X-Preview-PR: <编号>`。ALB 按该头路由到 PR 专属 ECS Service。响应会增加 `preview.prNumber`、
+`preview.runtime=go` 和 `preview.service=github-profile-go`，因此可以在页面和 Network 中直接验证。
 
 ## 三个 IAM 角色为什么分开
 
@@ -79,22 +82,30 @@ AWS 放开配额后，将 `PR_EXECUTOR` 改成 `codebuild` 即可切回原路径
    [构建角色回退信任策略](../infra/iam/codebuild-fallback-trust-policy.example.json)。它同时信任 CodeBuild 服务和
    唯一的触发角色，不直接信任任意 GitHub 工作流。
 
-没有 Cloudflare 域名时，将 `PREVIEW_DOMAIN` 设置成 `preview.local`。它不是公共 DNS；工作流会在摘要中生成
-带 Host Header 的验证命令：
+Cloudflare Worker 使用 HTTPS，ALB 仍可保持 HTTP 原点。直接验证 ALB 时使用：
 
 ```bash
-curl -H 'Host: pr-<编号>.preview.local' http://<共享ALB域名>/healthz
+curl -H 'X-Preview-PR: <编号>' http://<共享ALB域名>/readyz
 ```
 
 首次使用 GitHub Actions 回退路线：
 
 1. Actions → `PR preview shared base` → 保持 Branch 为 `main`，选择 `deploy`，创建共享 ALB 和 ECS 集群。
 2. 创建同仓库分支的 PR，`PR preview environment` 自动构建镜像并创建 PR Stack。
-3. 使用工作流摘要中的 `curl` 命令验收。
+3. 工作流先验证 ALB → PR ECS → PostgreSQL，再验证最终 Cloudflare HTTPS 预览地址。
 4. 关闭 PR，等待 PR Stack 自动删除。
-5. Actions → `PR preview shared base` → 选择 `destroy`，停止共享 ALB 费用。
+5. 学习期间保留共享 Base Stack；只有确定不再使用预览环境时才运行 `destroy` 停止 ALB 费用。
 
 删除共享 Base Stack 前必须先关闭所有预览 PR，否则 CloudFormation 导出仍被 PR Stack 引用，删除会失败。
+
+GitHub 仓库变量：
+
+| 名称 | 值 |
+| --- | --- |
+| `PR_PREVIEW_ALB_URL` | `http://<共享 ALB DNS>` |
+| `PR_DATABASE_SECRET_ARN` | 预览专用只读 PostgreSQL 连接串的 Secrets Manager ARN |
+| `AURORA_SECURITY_GROUP_ID` | `sg-0b4619fa07595e65f`，保存前仍需在控制台核对 |
+| `PREVIEW_TEST_USERNAME` | `Chi111`，必须是 `github_profiles` 中已存在的 login |
 
 ## CodeBuild 手动配置
 
@@ -130,20 +141,46 @@ curl -H 'Host: pr-<编号>.preview.local' http://<共享ALB域名>/healthz
 | `VPC_ID` | `vpc-0b653a19dd83dfa79` |
 | `PUBLIC_SUBNET_IDS` | `subnet-0f1075ff3eaba752e,subnet-0afbf279c7e89bd2d,subnet-0af83aebdf25ab627` |
 | `ECS_TASK_EXECUTION_ROLE_ARN` | `arn:aws:iam::311816466050:role/service-role/ecsTaskExecutionRole` |
-| `PREVIEW_DOMAIN` | 例如 `preview.example.com`，后续换成你的 Cloudflare 域名 |
+| `DATABASE_SECRET_ARN` | 预览专用只读 PostgreSQL 连接串的 Secrets Manager ARN |
+| `AURORA_SECURITY_GROUP_ID` | Aurora 数据库安全组 ID |
+| `PREVIEW_TEST_USERNAME` | 数据库中已存在、用于端到端验收的 GitHub login |
 
-不要把密码、数据库连接串或 Cloudflare API Token 放进普通环境变量。本阶段的 PR 服务使用不可连接的占位数据库地址，
-`/healthz` 可验证容器和 ALB，依赖数据库的接口不会伪装成可用。
+不要把密码、数据库连接串或 Cloudflare API Token 放进普通环境变量。`DATABASE_SECRET_ARN` 只是 ARN，不是密码；
+真正的连接串由 ECS Agent 从 Secrets Manager 注入。这个连接串必须属于预览专用只读账号，只能查询公开的
+`github_profiles` 表，绝不能复用生产管理员账号。
 
 ## 首次运行顺序
 
 1. 把本次代码合并到 `main`，因为 CodeBuild 只从可信主分支读取部署代码。
 2. 手动启动一次 CodeBuild，保留 `PR_ACTION=deploy-base`，创建共享 ALB 和 ECS 集群。
 3. 从 CloudFormation 输出复制 `LoadBalancerDNSName`。
-4. 在 Cloudflare 建立 `*.preview` 的 CNAME，目标是该 ALB DNS。
-5. 在 GitHub 仓库变量中配置 `PREVIEW_DOMAIN` 和 `AWS_REGION=us-east-2`。
-6. 创建测试 PR；Actions 成功后访问 `http://pr-<编号>.<PREVIEW_DOMAIN>/healthz`。
-7. 关闭 PR，确认 `github-profile-pr-<编号>` CloudFormation 栈被删除。
+4. 把 ALB URL 写入 GitHub 变量 `PR_PREVIEW_ALB_URL`，格式为 `http://<ALB DNS>`。
+5. 在 Secrets Manager 创建预览只读数据库连接串，并把 ARN 写入 `PR_DATABASE_SECRET_ARN`。
+6. 给 `ecsTaskExecutionRole` 添加 [预览 Secret 读取权限](../infra/iam/ecs-preview-secret-policy.example.json)。
+7. 创建测试 PR；Actions 成功后访问 Cloudflare 的 `pr-<编号>-...workers.dev`。
+8. 关闭 PR，确认 `github-profile-pr-<编号>` CloudFormation 栈被删除。
+
+第一次创建预览数据库密钥时，先以键值 JSON 保存：
+
+```json
+{
+  "username": "github_profile_preview",
+  "password": "至少 32 位随机密码"
+}
+```
+
+部署更新后的 SAM Stack 后，在 `github-profile-sam-dev-setup` Lambda 创建测试事件：
+
+```json
+{
+  "action": "provision-preview-database-user",
+  "secretArn": "复制 github-profile/pr-database-url 的完整 ARN"
+}
+```
+
+Setup Lambda 会在 VPC 内创建或更新 PostgreSQL 账号，只授予数据库连接、`public` schema 使用权和
+`public.github_profiles` 的 `SELECT`，然后把同一 Secret 更新成 ECS 可直接注入的 PostgreSQL URL。测试事件和日志
+都不包含数据库密码。
 
 ## 成本与后续增强
 

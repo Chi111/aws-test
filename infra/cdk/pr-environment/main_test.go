@@ -30,13 +30,14 @@ func TestLoadPREnvironment(t *testing.T) {
 		"PUBLIC_SUBNET_IDS":           "subnet-a,subnet-b",
 		"PR_NUMBER":                   "42",
 		"IMAGE_URI":                   "example.invalid/repository:pr-42-deadbeef",
-		"PREVIEW_DOMAIN":              "preview.example.com.",
 		"ECS_TASK_EXECUTION_ROLE_ARN": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+		"DATABASE_SECRET_ARN":         "arn:aws:secretsmanager:us-east-2:123456789012:secret:github-profile/database-url",
+		"AURORA_SECURITY_GROUP_ID":    "sg-database",
 	}))
 	if err != nil {
 		t.Fatalf("loadEnvironment returned an error: %v", err)
 	}
-	if config.PRNumber != 42 || config.PreviewDomain != "preview.example.com" {
+	if config.PRNumber != 42 {
 		t.Fatalf("unexpected PR configuration: %#v", config)
 	}
 }
@@ -62,13 +63,6 @@ func TestLoadEnvironmentRejectsUnsafeInputs(t *testing.T) {
 			}),
 			want: "between 1 and 50000",
 		},
-		{
-			name: "domain contains a path",
-			values: prEnvironment(map[string]string{
-				"PREVIEW_DOMAIN": "preview.example.com/path",
-			}),
-			want: "DNS name",
-		},
 	}
 
 	for _, test := range tests {
@@ -90,8 +84,9 @@ func prEnvironment(overrides map[string]string) map[string]string {
 		"PUBLIC_SUBNET_IDS":           "subnet-a,subnet-b",
 		"PR_NUMBER":                   "42",
 		"IMAGE_URI":                   "example.invalid/repository:pr-42-deadbeef",
-		"PREVIEW_DOMAIN":              "preview.example.com",
 		"ECS_TASK_EXECUTION_ROLE_ARN": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+		"DATABASE_SECRET_ARN":         "arn:aws:secretsmanager:us-east-2:123456789012:secret:github-profile/database-url",
+		"AURORA_SECURITY_GROUP_ID":    "sg-database",
 	}
 	for key, value := range overrides {
 		values[key] = value

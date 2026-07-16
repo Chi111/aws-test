@@ -333,6 +333,16 @@ select {
   line-height: 1.7;
 }
 
+.preview-proof {
+  padding: 10px 12px;
+  border: 1px dashed #76a895;
+  border-radius: 6px;
+  background: #e5f3ed;
+  color: #155f48;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
 .introduction-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
