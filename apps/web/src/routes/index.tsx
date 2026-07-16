@@ -36,6 +36,11 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
     ...init
   });
+
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    throw new Error("API route is not available in this preview");
+  }
+
   const body = (await response.json().catch(() => ({}))) as T & { error?: string };
   if (!response.ok) {
     throw new Error(body.error ?? "Request failed");
