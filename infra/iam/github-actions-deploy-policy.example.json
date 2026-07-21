@@ -39,6 +39,8 @@
         "s3:DeleteObject",
         "s3:GetBucketLocation",
         "s3:GetBucketPolicy",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
         "s3:GetObject",
         "s3:ListBucket",
         "s3:PutBucketOwnershipControls",
@@ -46,13 +48,17 @@
         "s3:PutBucketPublicAccessBlock",
         "s3:PutBucketTagging",
         "s3:PutBucketWebsite",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutLifecycleConfiguration",
         "s3:PutObject"
       ],
       "Resource": [
         "arn:aws:s3:::github-profile-sam-dev-artifacts-311816466050-us-east-2",
         "arn:aws:s3:::github-profile-sam-dev-artifacts-311816466050-us-east-2/*",
         "arn:aws:s3:::github-profile-sam-dev-web-311816466050-us-east-2",
-        "arn:aws:s3:::github-profile-sam-dev-web-311816466050-us-east-2/*"
+        "arn:aws:s3:::github-profile-sam-dev-web-311816466050-us-east-2/*",
+        "arn:aws:s3:::github-profile-sam-dev-syntheticsartifactsbucket-*",
+        "arn:aws:s3:::github-profile-sam-dev-syntheticsartifactsbucket-*/*"
       ]
     },
     {
@@ -60,18 +66,70 @@
       "Effect": "Allow",
       "Action": [
         "lambda:AddPermission",
+        "lambda:CreateAlias",
+        "lambda:CreateEventSourceMapping",
+        "lambda:CreateFunction",
+        "lambda:DeleteAlias",
+        "lambda:DeleteEventSourceMapping",
+        "lambda:DeleteFunction",
+        "lambda:GetAlias",
+        "lambda:GetEventSourceMapping",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:GetPolicy",
+        "lambda:InvokeFunction",
+        "lambda:ListEventSourceMappings",
+        "lambda:ListVersionsByFunction",
+        "lambda:PublishVersion",
+        "lambda:RemovePermission",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:UpdateAlias",
+        "lambda:UpdateEventSourceMapping",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration"
+      ],
+      "Resource": "arn:aws:lambda:us-east-2:311816466050:function:github-profile-sam-dev-*"
+    },
+    {
+      "Sid": "ManageSyntheticsLambdaFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:AddPermission",
         "lambda:CreateFunction",
         "lambda:DeleteFunction",
         "lambda:GetFunction",
         "lambda:GetFunctionConfiguration",
-        "lambda:InvokeFunction",
-        "lambda:RemovePermission",
+        "lambda:ListTags",
+        "lambda:PublishVersion",
         "lambda:TagResource",
         "lambda:UntagResource",
         "lambda:UpdateFunctionCode",
         "lambda:UpdateFunctionConfiguration"
       ],
-      "Resource": "arn:aws:lambda:us-east-2:311816466050:function:github-profile-sam-dev-*"
+      "Resource": "arn:aws:lambda:us-east-2:311816466050:function:cwsyn-*"
+    },
+    {
+      "Sid": "ReadSyntheticsRuntimeLayers",
+      "Effect": "Allow",
+      "Action": "lambda:GetLayerVersion",
+      "Resource": [
+        "arn:aws:lambda:us-east-2:311816466050:layer:cwsyn-*",
+        "arn:aws:lambda:us-east-2:311816466050:layer:Synthetics:*",
+        "arn:aws:lambda:us-east-2:311816466050:layer:Synthetics_Selenium:*",
+        "arn:aws:lambda:us-east-2:311816466050:layer:AWS-CW-Synthetics*:*",
+        "arn:aws:lambda:us-east-2:*:layer:Synthetics:*",
+        "arn:aws:lambda:us-east-2:*:layer:AWS-CW-Synthetics*:*"
+      ]
+    },
+    {
+      "Sid": "ManageAccountSyntheticsLayers",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:DeleteLayerVersion",
+        "lambda:PublishLayerVersion"
+      ],
+      "Resource": "arn:aws:lambda:us-east-2:311816466050:layer:cwsyn-*"
     },
     {
       "Sid": "ManageLambdaExecutionRoles",
@@ -83,12 +141,123 @@
         "iam:DeleteRolePolicy",
         "iam:DetachRolePolicy",
         "iam:GetRole",
+        "iam:GetRolePolicy",
         "iam:PassRole",
         "iam:PutRolePolicy",
         "iam:TagRole",
-        "iam:UntagRole"
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy"
       ],
       "Resource": "arn:aws:iam::311816466050:role/github-profile-sam-dev-*"
+    },
+    {
+      "Sid": "ManageProfileMessaging",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetSubscriptionAttributes",
+        "sns:GetTopicAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sns:ListTagsForResource",
+        "sns:SetSubscriptionAttributes",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:TagResource",
+        "sns:Unsubscribe",
+        "sns:UntagResource"
+      ],
+      "Resource": "arn:aws:sns:us-east-2:311816466050:github-profile-sam-dev-*"
+    },
+    {
+      "Sid": "ManageProfileQueues",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:AddPermission",
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueueTags",
+        "sqs:RemovePermission",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue"
+      ],
+      "Resource": "arn:aws:sqs:us-east-2:311816466050:github-profile-sam-dev-*"
+    },
+    {
+      "Sid": "ListProfileQueues",
+      "Effect": "Allow",
+      "Action": "sqs:ListQueues",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageDeploymentAlarms",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:PutMetricAlarm"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch:us-east-2:311816466050:alarm:github-profile-sam-dev-*",
+        "arn:aws:cloudwatch:us-east-2:311816466050:alarm:Synthetics-Alarm-*"
+      ]
+    },
+    {
+      "Sid": "DescribeDeploymentAlarms",
+      "Effect": "Allow",
+      "Action": "cloudwatch:DescribeAlarms",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageApiCanary",
+      "Effect": "Allow",
+      "Action": [
+        "synthetics:CreateCanary",
+        "synthetics:DeleteCanary",
+        "synthetics:GetCanary",
+        "synthetics:StartCanary",
+        "synthetics:StopCanary",
+        "synthetics:TagResource",
+        "synthetics:UntagResource",
+        "synthetics:UpdateCanary"
+      ],
+      "Resource": "arn:aws:synthetics:us-east-2:311816466050:canary:*"
+    },
+    {
+      "Sid": "ManageLambdaCanaryDeployments",
+      "Effect": "Allow",
+      "Action": [
+        "codedeploy:CreateApplication",
+        "codedeploy:CreateDeployment",
+        "codedeploy:CreateDeploymentGroup",
+        "codedeploy:DeleteApplication",
+        "codedeploy:DeleteDeploymentGroup",
+        "codedeploy:GetApplication",
+        "codedeploy:GetDeployment",
+        "codedeploy:GetDeploymentConfig",
+        "codedeploy:GetDeploymentGroup",
+        "codedeploy:ListTagsForResource",
+        "codedeploy:TagResource",
+        "codedeploy:UntagResource",
+        "codedeploy:UpdateDeploymentGroup"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageOutboxPublisherSchedule",
+      "Effect": "Allow",
+      "Action": [
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:PutRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:TagResource",
+        "events:UntagResource"
+      ],
+      "Resource": "arn:aws:events:us-east-2:311816466050:rule/github-profile-sam-dev-*"
     },
     {
       "Sid": "ManageHttpApi",

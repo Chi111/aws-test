@@ -1,6 +1,15 @@
 import { eq } from "drizzle-orm";
-import { adminUsers, githubProfileFields, githubProfiles, type AdminUser, type GithubProfile, type GithubProfileField } from "@github-profile-sam/db/schema";
+import {
+  adminUsers,
+  githubProfileFields,
+  githubProfiles,
+  profileEventOutbox,
+  type AdminUser,
+  type GithubProfile,
+  type GithubProfileField
+} from "@github-profile-sam/db/schema";
 import type { Role } from "./auth";
+import type { ProfileUpdatedEvent } from "./profile-events";
 
 export type AppUser = Pick<AdminUser, "id" | "email" | "name" | "passwordHash"> & { role: Role };
 
@@ -26,7 +35,7 @@ export type AppRepository = {
   findUserByEmail(email: string): Promise<AppUser | null>;
   findUserById(id: string): Promise<AppUser | null>;
   listProfiles(): Promise<GithubProfile[]>;
-  upsertGithubProfile(profile: GithubProfileInput): Promise<GithubProfile>;
+  upsertGithubProfile(profile: GithubProfileInput, event?: ProfileUpdatedEvent): Promise<GithubProfile>;
   listFields(githubId: string): Promise<GithubProfileField[]>;
   createField(input: FieldInput): Promise<GithubProfileField>;
   deleteField(id: string): Promise<boolean>;
@@ -55,30 +64,40 @@ export class DrizzleRepository implements AppRepository {
     return db.select().from(githubProfiles);
   }
 
-  async upsertGithubProfile(profile: GithubProfileInput) {
+  async upsertGithubProfile(profile: GithubProfileInput, event?: ProfileUpdatedEvent) {
     const db = await this.getDb();
-    const [saved] = await db
-      .insert(githubProfiles)
-      .values(profile)
-      .onConflictDoUpdate({
-        target: githubProfiles.githubId,
-        set: {
-          login: profile.login,
-          name: profile.name,
-          avatarUrl: profile.avatarUrl,
-          htmlUrl: profile.htmlUrl,
-          publicRepos: profile.publicRepos,
-          followers: profile.followers,
-          following: profile.following,
-          githubUpdatedAt: profile.githubUpdatedAt,
-          fetchedAt: new Date().toISOString()
-        }
-      })
-      .returning();
-    if (!saved) {
-      throw new Error("Failed to save GitHub profile");
-    }
-    return saved;
+    return db.transaction(async (transaction) => {
+      const [saved] = await transaction
+        .insert(githubProfiles)
+        .values(profile)
+        .onConflictDoUpdate({
+          target: githubProfiles.githubId,
+          set: {
+            login: profile.login,
+            name: profile.name,
+            avatarUrl: profile.avatarUrl,
+            htmlUrl: profile.htmlUrl,
+            publicRepos: profile.publicRepos,
+            followers: profile.followers,
+            following: profile.following,
+            githubUpdatedAt: profile.githubUpdatedAt,
+            fetchedAt: new Date().toISOString()
+          }
+        })
+        .returning();
+      if (!saved) {
+        throw new Error("Failed to save GitHub profile");
+      }
+
+      if (event) {
+        await transaction
+          .insert(profileEventOutbox)
+          .values({ eventId: event.eventId, eventType: event.eventType, payload: event })
+          .onConflictDoNothing({ target: profileEventOutbox.eventId });
+      }
+
+      return saved;
+    });
   }
 
   async listFields(githubId: string) {

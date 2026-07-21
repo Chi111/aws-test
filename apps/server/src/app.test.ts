@@ -122,6 +122,61 @@ describe("admin MVP API", () => {
     await expect(response.json()).resolves.toMatchObject({ profile: { githubId: "123", login: "octo" } });
   });
 
+  it("atomically queues a sanitized profile.updated outbox event while saving a profile", async () => {
+    const repository = await createRepo();
+    const upsertGithubProfile = vi.spyOn(repository, "upsertGithubProfile");
+    const app = createApp({
+      repository,
+      fetchGithub: vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            id: 456,
+            login: "event-user",
+            name: "Event User",
+            avatar_url: "https://avatars.githubusercontent.com/u/456",
+            html_url: "https://github.com/event-user",
+            public_repos: 4,
+            followers: 5,
+            following: 6,
+            updated_at: "2026-07-21T01:02:03Z"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+    });
+    const login = await app.fetch(jsonRequest("/api/auth/login", { email: "admin@example.com", password: "Admin123!" }));
+
+    const response = await app.fetch(
+      jsonRequest("/api/github/profile", { token: "ghp_never_publish_this" }, cookieFrom(login))
+    );
+
+    expect(response.status).toBe(200);
+    expect(upsertGithubProfile).toHaveBeenCalledOnce();
+    expect(upsertGithubProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ githubId: "456", login: "event-user" }),
+      expect.objectContaining({
+        specVersion: "1.0",
+        eventType: "profile.updated",
+        idempotencyKey: "456:2026-07-21T01:02:03Z",
+        profile: expect.objectContaining({ githubId: "456", login: "event-user" })
+      })
+    );
+    expect(JSON.stringify(upsertGithubProfile.mock.calls[0]?.[1])).not.toContain("ghp_never_publish_this");
+  });
+
+  it("exposes the release version in the public health response", async () => {
+    const app = createApp({ repository: await createRepo(), releaseVersion: "release-abc123" });
+
+    const response = await app.fetch(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      status: "ok",
+      service: "github-profile-sam",
+      version: "release-abc123"
+    });
+  });
+
   it("calls the Go health endpoint through its configured Cloud Map DNS name", async () => {
     const fetchGoService = vi.fn(async (url: string | URL | Request) => {
       expect(String(url)).toBe("http://go.internal.github-profile:8080/healthz");

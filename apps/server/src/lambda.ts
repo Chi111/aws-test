@@ -1,5 +1,6 @@
 import { env } from "@github-profile-sam/env/server";
 import { createApp } from "./app";
+import { logApiServerErrorMetric } from "./api-metrics";
 
 type ApiGatewayV2Event = {
   rawPath?: string;
@@ -27,6 +28,7 @@ const app = createApp({
   corsOrigin: env.CORS_ORIGIN,
   goServiceBaseUrl: env.GO_SERVICE_BASE_URL,
   jwtSecret: env.JWT_SECRET,
+  releaseVersion: env.RELEASE_VERSION,
   isProduction: env.NODE_ENV === "production"
 });
 
@@ -56,6 +58,7 @@ function requestFromEvent(event: ApiGatewayV2Event) {
 
 export async function handler(event: ApiGatewayV2Event): Promise<LambdaResponse> {
   const response = await app.fetch(requestFromEvent(event));
+  logApiServerErrorMetric(response.status, env.METRIC_SERVICE_NAME);
   const headers: Record<string, string> = {};
   const cookies: string[] = [];
   response.headers.forEach((value, key) => {

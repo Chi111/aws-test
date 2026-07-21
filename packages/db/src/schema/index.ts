@@ -1,4 +1,4 @@
-import { integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const adminRole = pgEnum("admin_role", ["admin", "operator", "viewer"]);
 
@@ -38,6 +38,22 @@ export const githubProfileFields = pgTable(
   (table) => [uniqueIndex("github_profile_fields_profile_key_unique").on(table.githubId, table.fieldKey)]
 );
 
+export const profileEventOutbox = pgTable(
+  "profile_event_outbox",
+  {
+    eventId: uuid("event_id").primaryKey(),
+    eventType: varchar("event_type", { length: 80 }).notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    processingAt: timestamp("processing_at", { withTimezone: true, mode: "string" }),
+    publishedAt: timestamp("published_at", { withTimezone: true, mode: "string" }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow()
+  },
+  (table) => [index("profile_event_outbox_pending_idx").on(table.publishedAt, table.createdAt)]
+);
+
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type GithubProfile = typeof githubProfiles.$inferSelect;
 export type GithubProfileField = typeof githubProfileFields.$inferSelect;
+export type ProfileEventOutbox = typeof profileEventOutbox.$inferSelect;

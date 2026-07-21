@@ -161,6 +161,22 @@ export async function handler(event: SetupEvent = {}) {
       create unique index if not exists github_profile_fields_profile_key_unique
       on github_profile_fields (github_id, field_key);
     `);
+    await client.query(`
+      create table if not exists profile_event_outbox (
+        event_id uuid primary key,
+        event_type varchar(80) not null,
+        payload jsonb not null,
+        attempt_count integer not null default 0,
+        processing_at timestamptz,
+        published_at timestamptz,
+        last_error text,
+        created_at timestamptz not null default now()
+      );
+    `);
+    await client.query(`
+      create index if not exists profile_event_outbox_pending_idx
+      on profile_event_outbox (published_at, created_at);
+    `);
 
     for (const user of users) {
       await client.query(

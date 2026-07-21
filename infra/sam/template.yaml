@@ -29,6 +29,31 @@ Parameters:
   AuroraSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Existing Aurora security group that should allow Lambda on port 5432.
+  ReleaseVersion:
+    Type: String
+    Default: local
+    AllowedPattern: "^[A-Za-z0-9._-]+$"
+    Description: Release identifier returned by the health endpoint for canary verification.
+  EnableSynthetics:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Create and start a CloudWatch Synthetics API health canary.
+  SyntheticsCanaryName:
+    Type: String
+    Default: gh-profile-api-dev
+    AllowedPattern: "^[0-9A-Za-z_-]{1,21}$"
+    Description: Globally visible canary name. CloudWatch Synthetics limits names to 21 characters.
+  SyntheticsScheduleExpression:
+    Type: String
+    Default: rate(5 minutes)
+    Description: CloudWatch Synthetics schedule. Use rate(1 minute) temporarily for assignment evidence.
+  SyntheticsRuntimeVersion:
+    Type: String
+    Default: syn-nodejs-puppeteer-16.1
+    Description: Supported CloudWatch Synthetics Puppeteer runtime version.
   EnableCloudMapIntegration:
     Type: String
     Default: "false"
@@ -91,6 +116,7 @@ Rules:
 Conditions:
   CreateManagedVpcNetworking: !Equals [!Ref EnableManagedVpcNetworking, "true"]
   CreateCloudMapIntegration: !Equals [!Ref EnableCloudMapIntegration, "true"]
+  CreateSynthetics: !Equals [!Ref EnableSynthetics, "true"]
 
 Globals:
   Function:
@@ -99,16 +125,6 @@ Globals:
       - arm64
     Timeout: 20
     MemorySize: 512
-    Environment:
-      Variables:
-        NODE_ENV: production
-        DATABASE_URL: !Ref DatabaseUrl
-        JWT_SECRET: !Ref JwtSecret
-        CORS_ORIGIN: !Ref CorsOrigin
-        GO_SERVICE_BASE_URL: !If
-          - CreateCloudMapIntegration
-          - !Sub "http://go.${CloudMapNamespaceName}:8080"
-          - ""
 
 Resources:
   ApiHttpApi:
@@ -125,6 +141,311 @@ Resources:
           - OPTIONS
         AllowOrigins:
           - !Ref CorsOrigin
+
+  ProfileEventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-profile-events"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ProfileEventsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ProjectName}-profile-events-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ProfileEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ProjectName}-profile-events"
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ProfileEventsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ProfileEventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ProfileEventsQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowOnlyProfileEventsTopic
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ProfileEventsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref ProfileEventsTopic
+
+  ProfileEventsSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: ProfileEventsQueuePolicy
+    Properties:
+      TopicArn: !Ref ProfileEventsTopic
+      Protocol: sqs
+      Endpoint: !GetAtt ProfileEventsQueue.Arn
+      RawMessageDelivery: true
+
+  ProfileEventWorker:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-profile-event-worker"
+      Description: Validates and processes profile.updated events from SQS.
+      CodeUri: ../../apps/server/dist
+      Handler: profile-event-worker.handler
+      Timeout: 20
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - SQSPollerPolicy:
+            QueueName: !GetAtt ProfileEventsQueue.QueueName
+      Events:
+        ProfileEvents:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ProfileEventsQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  ProfileEventOutboxPublisher:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-profile-event-outbox-publisher"
+      Description: Claims committed PostgreSQL outbox rows and publishes them to the profile events SNS topic.
+      CodeUri: ../../apps/server/dist
+      Handler: profile-event-outbox-publisher.handler
+      Timeout: 60
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DATABASE_URL: !Ref DatabaseUrl
+          PROFILE_EVENTS_TOPIC_ARN: !Ref ProfileEventsTopic
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds: !If
+          - CreateManagedVpcNetworking
+          - - !Ref ManagedPrivateSubnet1
+            - !Ref ManagedPrivateSubnet2
+          - !Ref PrivateSubnetIds
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambdaVPCAccessExecutionRole
+        - Statement:
+            - Sid: PublishCommittedProfileEvents
+              Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref ProfileEventsTopic
+      Events:
+        PublishPendingOutboxEvents:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
+
+  ApiServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-api-server-errors"
+      AlarmDescription: Roll back a canary release when the API emits a server-error response metric.
+      Namespace: GitHubProfileSam
+      MetricName: Api5xxCount
+      Dimensions:
+        - Name: Service
+          Value: !Ref ProjectName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ApiLambdaInvocationErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-api-lambda-errors"
+      AlarmDescription: Roll back a canary release on API Lambda crashes, timeouts, or unhandled invocation errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  SyntheticsArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateSynthetics
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireCanaryArtifacts
+            Status: Enabled
+            ExpirationInDays: 31
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  SyntheticsCanaryRole:
+    Type: AWS::IAM::Role
+    Condition: CreateSynthetics
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: WriteCanaryTelemetry
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !GetAtt SyntheticsArtifactsBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "${SyntheticsArtifactsBucket.Arn}/*"
+              - Effect: Allow
+                Action: s3:ListAllMyBuckets
+                Resource: "*"
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: CloudWatchSynthetics
+              - Effect: Allow
+                Action: xray:PutTraceSegments
+                Resource: "*"
+              - Effect: Allow
+                Action: logs:CreateLogGroup
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cwsyn-*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cwsyn-*:*"
+
+  ApiHealthCanary:
+    Type: AWS::Synthetics::Canary
+    Condition: CreateSynthetics
+    DependsOn: ApiFunction
+    Properties:
+      Name: !Ref SyntheticsCanaryName
+      ArtifactS3Location: !Sub "s3://${SyntheticsArtifactsBucket}/"
+      ExecutionRoleArn: !GetAtt SyntheticsCanaryRole.Arn
+      RuntimeVersion: !Ref SyntheticsRuntimeVersion
+      StartCanaryAfterCreation: true
+      SuccessRetentionPeriod: 31
+      FailureRetentionPeriod: 31
+      Schedule:
+        Expression: !Ref SyntheticsScheduleExpression
+        DurationInSeconds: 0
+      RunConfig:
+        TimeoutInSeconds: 60
+        EnvironmentVariables:
+          TARGET_URL: !Sub "https://${ApiHttpApi}.execute-api.${AWS::Region}.amazonaws.com/health"
+      Code:
+        Handler: apiCanary.handler
+        Script: |
+          const synthetics = require('@aws/synthetics-puppeteer');
+
+          async function readBody(response) {
+            return await new Promise((resolve, reject) => {
+              const chunks = [];
+              response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+              response.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+              response.on('error', reject);
+            });
+          }
+
+          async function apiCanary() {
+            const target = new URL(process.env.TARGET_URL);
+            const request = {
+              protocol: target.protocol,
+              hostname: target.hostname,
+              port: target.port ? Number(target.port) : 443,
+              method: 'GET',
+              path: `${target.pathname}${target.search}`,
+              headers: {
+                accept: 'application/json',
+                'user-agent': synthetics.getCanaryUserAgentString()
+              }
+            };
+
+            await synthetics.executeHttpStep('api-health', request, async (response) => {
+              const body = await readBody(response);
+              if (response.statusCode !== 200) {
+                throw new Error(`Expected HTTP 200, received ${response.statusCode}: ${body}`);
+              }
+              const payload = JSON.parse(body);
+              if (payload.status !== 'ok' || payload.service !== 'github-profile-sam' || !payload.version) {
+                throw new Error(`Unexpected health response: ${body}`);
+              }
+            });
+          }
+
+          exports.handler = async () => apiCanary();
+
+  ApiHealthCanaryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateSynthetics
+    Properties:
+      AlarmName: !Sub "Synthetics-Alarm-${SyntheticsCanaryName}-1"
+      AlarmDescription: The public API health canary failed or stopped reporting.
+      Namespace: CloudWatchSynthetics
+      MetricName: SuccessPercent
+      Dimensions:
+        - Name: CanaryName
+          Value: !Ref ApiHealthCanary
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 100
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
 
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -316,6 +637,25 @@ Resources:
       FunctionName: !Sub "${ProjectName}-api"
       CodeUri: ../../apps/server/dist
       Handler: lambda.handler
+      AutoPublishAlias: live
+      AutoPublishAliasAllProperties: true
+      DeploymentPreference:
+        Type: Canary10Percent10Minutes
+        Alarms:
+          - !Ref ApiServerErrorAlarm
+          - !Ref ApiLambdaInvocationErrorAlarm
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DATABASE_URL: !Ref DatabaseUrl
+          JWT_SECRET: !Ref JwtSecret
+          CORS_ORIGIN: !Ref CorsOrigin
+          RELEASE_VERSION: !Ref ReleaseVersion
+          METRIC_SERVICE_NAME: !Ref ProjectName
+          GO_SERVICE_BASE_URL: !If
+            - CreateCloudMapIntegration
+            - !Sub "http://go.${CloudMapNamespaceName}:8080"
+            - ""
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
@@ -349,6 +689,13 @@ Resources:
       Handler: setup.handler
       Description: Runs idempotent MVP database setup inside the VPC.
       Timeout: 60
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DATABASE_URL: !Ref DatabaseUrl
+          JWT_SECRET: !Ref JwtSecret
+          CORS_ORIGIN: !Ref CorsOrigin
+          GO_SERVICE_BASE_URL: ""
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
@@ -410,6 +757,28 @@ Outputs:
   SetupFunctionName:
     Description: Lambda function that performs VPC-internal database setup.
     Value: !Ref SetupFunction
+  ApiLiveAliasArn:
+    Description: Lambda live alias used by CodeDeploy for canary traffic shifting.
+    Value: !Sub "${ApiFunction.Arn}:live"
+  ProfileEventsTopicArn:
+    Description: SNS topic that receives profile.updated events.
+    Value: !Ref ProfileEventsTopic
+  ProfileEventsQueueUrl:
+    Description: SQS queue consumed by the profile event worker.
+    Value: !Ref ProfileEventsQueue
+  ProfileEventsDeadLetterQueueUrl:
+    Description: SQS dead-letter queue for profile events that fail processing three times.
+    Value: !Ref ProfileEventsDeadLetterQueue
+  ProfileEventWorkerName:
+    Description: Lambda function that consumes profile events from SQS.
+    Value: !Ref ProfileEventWorker
+  ProfileEventOutboxPublisherName:
+    Description: Scheduled Lambda that publishes committed PostgreSQL outbox rows to SNS.
+    Value: !Ref ProfileEventOutboxPublisher
+  SyntheticsCanary:
+    Condition: CreateSynthetics
+    Description: CloudWatch Synthetics canary monitoring the public API health endpoint.
+    Value: !Ref ApiHealthCanary
   ManagedPublicSubnetId:
     Condition: CreateManagedVpcNetworking
     Description: SAM-managed public subnet for NAT.

@@ -8,6 +8,8 @@ The PR preview architecture uses GitHub OIDC, three narrowly scoped IAM roles, C
 
 The private service-to-service path lets the VPC-attached Lambda call the ECS Go service through Cloud Map DNS without traversing the public ALB. See [Lambda 通过 Cloud Map 调用 ECS Go 服务](docs/cloud-map-lambda.md).
 
+The SAM stack also contains the assignment implementation for CloudWatch Synthetics, SNS to SQS profile events with an SQS dead-letter queue, and a CodeDeploy-backed Lambda canary release. See [AWS Synthetics、SNS/SQS/DLQ 与 API 灰度作业](docs/aws-synthetics-sns-sqs-canary.md).
+
 ## What It Does
 
 - Internal demo login with three roles: `admin`, `operator`, `viewer`.
@@ -96,6 +98,8 @@ sam deploy --config-file infra/sam/samconfig.toml --template-file infra/sam/temp
 - Variable `PRIVATE_SUBNET_IDS`
 - Variable `AURORA_SECURITY_GROUP_ID`
 - Variable `VITE_SERVER_URL`
+- Optional variable `ENABLE_SYNTHETICS` (set `true` to create and start the health canary)
+- Optional variables `SYNTHETICS_CANARY_NAME`, `SYNTHETICS_SCHEDULE_EXPRESSION`, and `SYNTHETICS_RUNTIME_VERSION`
 - Optional variable `SAM_ARTIFACT_BUCKET`
 - Optional variable `ENABLE_MANAGED_VPC_NETWORKING`
 - Optional variable `INTERNET_GATEWAY_ID`
@@ -130,6 +134,10 @@ Variables:
 | `PRIVATE_SUBNET_IDS` | `subnet-0afbf279c7e89bd2d,subnet-0f1075ff3eaba752e` |
 | `AURORA_SECURITY_GROUP_ID` | `sg-0b4619fa07595e65f` |
 | `VITE_SERVER_URL` | First deploy: `http://localhost:3000`; after deploy, update to the API URL |
+| `ENABLE_SYNTHETICS` | Optional. Default `false`; set `true` after the deployment role has Synthetics, S3, IAM, and CloudWatch permissions |
+| `SYNTHETICS_CANARY_NAME` | Optional. Default `gh-profile-api-dev`; must be unique and at most 21 characters |
+| `SYNTHETICS_SCHEDULE_EXPRESSION` | Optional. Default `rate(5 minutes)`; use `rate(1 minute)` temporarily when collecting assignment evidence |
+| `SYNTHETICS_RUNTIME_VERSION` | Optional. Default `syn-nodejs-puppeteer-16.1`; update when AWS recommends a newer supported runtime |
 | `SAM_ARTIFACT_BUCKET` | Optional. Default: `github-profile-sam-dev-artifacts-311816466050-us-east-2` |
 | `ENABLE_MANAGED_VPC_NETWORKING` | Optional. `false` keeps the current default subnets; `true` creates one public subnet, two private subnets, NAT, and routes |
 | `INTERNET_GATEWAY_ID` | Required when `ENABLE_MANAGED_VPC_NETWORKING=true`. Current default VPC IGW was `igw-01db71fd0dd6333e6` during audit |

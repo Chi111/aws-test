@@ -4,6 +4,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { logger } from "hono/logger";
 import { z } from "zod";
 import { canRead, canWrite, signSession, verifyPassword, verifySession, type SessionUser } from "./auth";
+import { createProfileUpdatedEvent } from "./profile-events";
 import { DrizzleRepository, type AppRepository, type GithubProfileInput } from "./repository";
 
 type Variables = {
@@ -17,6 +18,7 @@ type CreateAppOptions = {
   fetchGithub?: typeof fetch;
   fetchGoService?: typeof fetch;
   goServiceBaseUrl?: string;
+  releaseVersion?: string;
   isProduction?: boolean;
 };
 
@@ -97,6 +99,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const fetchGithub = options.fetchGithub ?? fetch;
   const fetchGoService = options.fetchGoService ?? fetch;
   const goServiceBaseUrl = options.goServiceBaseUrl ?? process.env.GO_SERVICE_BASE_URL ?? "";
+  const releaseVersion = options.releaseVersion ?? process.env.RELEASE_VERSION ?? "local";
   const app = new Hono<{ Variables: Variables }>();
 
   app.use(logger());
@@ -135,7 +138,7 @@ export function createApp(options: CreateAppOptions = {}) {
     return next();
   };
 
-  app.get("/health", (c) => c.json({ status: "ok", service: "github-profile-sam" }));
+  app.get("/health", (c) => c.json({ status: "ok", service: "github-profile-sam", version: releaseVersion }));
 
   app.get("/api/go/health", async (c) => {
     if (!goServiceBaseUrl) {
@@ -247,7 +250,8 @@ export function createApp(options: CreateAppOptions = {}) {
     }
     try {
       const profile = await githubProfileFromToken(parsed.data.token, fetchGithub);
-      return c.json({ profile: await repository.upsertGithubProfile(profile) });
+      const savedProfile = await repository.upsertGithubProfile(profile, createProfileUpdatedEvent(profile));
+      return c.json({ profile: savedProfile });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "GitHub profile request failed" }, 400);
     }
