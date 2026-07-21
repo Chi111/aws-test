@@ -231,7 +231,6 @@ Resources:
       CodeUri: ../../apps/server/dist
       Handler: profile-event-outbox-publisher.handler
       Timeout: 60
-      ReservedConcurrentExecutions: 1
       Environment:
         Variables:
           NODE_ENV: production
