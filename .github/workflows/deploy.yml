@@ -103,7 +103,7 @@ jobs:
           ReleaseVersion="$GITHUB_SHA"
           EnableSynthetics="$ENABLE_SYNTHETICS"
           SyntheticsCanaryName="$SYNTHETICS_CANARY_NAME"
-          SyntheticsScheduleExpression="$SYNTHETICS_SCHEDULE_EXPRESSION"
+          SyntheticsScheduleExpression="'$SYNTHETICS_SCHEDULE_EXPRESSION'"
           SyntheticsRuntimeVersion="$SYNTHETICS_RUNTIME_VERSION"
           EnableCloudMapIntegration=${{ vars.ENABLE_CLOUD_MAP_INTEGRATION || 'false' }}
           CloudMapNamespaceName=${{ vars.CLOUD_MAP_NAMESPACE_NAME || 'internal.github-profile' }}
