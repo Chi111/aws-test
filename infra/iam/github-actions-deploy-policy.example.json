@@ -25,6 +25,7 @@
       ],
       "Resource": [
         "arn:aws:cloudformation:us-east-2:311816466050:stack/github-profile-sam-dev/*",
+        "arn:aws:cloudformation:us-east-2:311816466050:stack/github-profile-sam-dev-aiops/*",
         "arn:aws:cloudformation:us-east-2:311816466050:changeSet/*",
         "arn:aws:cloudformation:us-east-2:aws:transform/Serverless-2016-10-31"
       ]

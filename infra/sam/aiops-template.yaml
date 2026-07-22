@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Read-only AWS AIOps investigator for the GitHub Profile SAM project.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: github-profile-sam-dev
+    AllowedPattern: "^[a-z0-9-]+$"
+  BedrockModelId:
+    Type: String
+    Default: us.amazon.nova-lite-v1:0
+    MinLength: 1
+    Description: Bedrock model or inference profile ID that supports Converse tool use.
+  NotificationEmail:
+    Type: String
+    Default: ""
+    Description: Optional email subscription for AIOps reports. The recipient must confirm the SNS subscription.
+  SyntheticsAlarmPrefix:
+    Type: String
+    Default: Synthetics-Alarm-gh-profile-
+    Description: Alarm-name prefix used by the project's CloudWatch Synthetics canary.
+  SqsQueueUrls:
+    Type: String
+    Default: ""
+    Description: Optional comma-separated SQS queue URLs that the agent may inspect.
+
+Conditions:
+  CreateEmailSubscription: !Not [!Equals [!Ref NotificationEmail, ""]]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    MemorySize: 512
+    Timeout: 120
+
+Resources:
+  AiOpsReportTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-aiops-reports"
+      KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Component
+          Value: aiops
+
+  AiOpsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: CreateEmailSubscription
+    Properties:
+      TopicArn: !Ref AiOpsReportTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  AiOpsReportQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ProjectName}-aiops-reports"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Component
+          Value: aiops
+
+  AiOpsReportQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref AiOpsReportQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowOnlyAiOpsReportTopic
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt AiOpsReportQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref AiOpsReportTopic
+
+  AiOpsReportQueueSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: AiOpsReportQueuePolicy
+    Properties:
+      TopicArn: !Ref AiOpsReportTopic
+      Protocol: sqs
+      Endpoint: !GetAtt AiOpsReportQueue.Arn
+      RawMessageDelivery: true
+
+  AiOpsInvestigatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-aiops-investigator"
+      Description: Uses Bedrock and read-only AWS tools to investigate CloudWatch alarms and publish a report.
+      CodeUri: ../../apps/aiops-agent/dist
+      Handler: handler.handler
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          AIOPS_REPORT_TOPIC_ARN: !Ref AiOpsReportTopic
+          AIOPS_LOG_GROUP_PREFIXES: !Sub "/aws/lambda/${ProjectName}-,/ecs/github-profile/pr-"
+          AIOPS_QUEUE_URLS: !Ref SqsQueueUrls
+          AIOPS_EXPECTED_ACCOUNT_ID: !Ref AWS::AccountId
+          AIOPS_EXPECTED_REGION: !Ref AWS::Region
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Sid: InvokeConfiguredBedrockModel
+              Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+            - Sid: DiscoverLogGroupsAndReadQueryResults
+              Effect: Allow
+              Action:
+                - logs:DescribeLogGroups
+                - logs:GetQueryResults
+                - logs:StopQuery
+              Resource: "*"
+            - Sid: QueryOnlyProjectLogGroups
+              Effect: Allow
+              Action:
+                - logs:StartQuery
+              Resource:
+                - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-*"
+                - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/github-profile/pr-*"
+            - Sid: ReadCloudWatchAlarmDetails
+              Effect: Allow
+              Action:
+                - cloudwatch:DescribeAlarms
+              Resource: "*"
+            - Sid: ReadProjectQueueState
+              Effect: Allow
+              Action:
+                - sqs:GetQueueAttributes
+              Resource: !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:${ProjectName}-profile-events*"
+            - Sid: PublishAiOpsReports
+              Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref AiOpsReportTopic
+            - Sid: UseSnsManagedKeyForReports
+              Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey*
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  kms:CallerAccount: !Ref AWS::AccountId
+                  kms:ViaService: !Sub "sns.${AWS::Region}.${AWS::URLSuffix}"
+      Events:
+        ProjectAlarmEnteredAlarmState:
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              source:
+                - aws.cloudwatch
+              detail-type:
+                - CloudWatch Alarm State Change
+              detail:
+                state:
+                  value:
+                    - ALARM
+                alarmName:
+                  - prefix: !Sub "${ProjectName}-"
+                  - prefix: !Ref SyntheticsAlarmPrefix
+
+Outputs:
+  AiOpsInvestigatorFunctionName:
+    Description: Lambda function that investigates CloudWatch alarm transitions.
+    Value: !Ref AiOpsInvestigatorFunction
+  AiOpsReportTopicArn:
+    Description: SNS topic containing generated AIOps incident reports.
+    Value: !Ref AiOpsReportTopic
+  AiOpsReportQueueUrl:
+    Description: Durable SQS queue containing generated AIOps incident reports for verification.
+    Value: !Ref AiOpsReportQueue

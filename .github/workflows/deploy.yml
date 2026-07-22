@@ -21,6 +21,9 @@ jobs:
       SYNTHETICS_CANARY_NAME: ${{ vars.SYNTHETICS_CANARY_NAME || 'gh-profile-api-dev' }}
       SYNTHETICS_SCHEDULE_EXPRESSION: ${{ vars.SYNTHETICS_SCHEDULE_EXPRESSION || 'rate(5 minutes)' }}
       SYNTHETICS_RUNTIME_VERSION: ${{ vars.SYNTHETICS_RUNTIME_VERSION || 'syn-nodejs-puppeteer-16.1' }}
+      ENABLE_AIOPS: ${{ vars.ENABLE_AIOPS || 'false' }}
+      BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0' }}
+      AIOPS_NOTIFICATION_EMAIL: ${{ vars.AIOPS_NOTIFICATION_EMAIL }}
     steps:
       - uses: actions/checkout@v6
 
@@ -45,8 +48,16 @@ jobs:
 
       - uses: aws-actions/setup-sam@v2
 
+      - name: Validate SAM templates
+        run: |
+          sam validate --lint --template-file infra/sam/template.yaml
+          sam validate --lint --template-file infra/sam/aiops-template.yaml
+
       - name: SAM build
         run: sam build --template-file infra/sam/template.yaml
+
+      - name: SAM build AIOps
+        run: sam build --template-file infra/sam/aiops-template.yaml --build-dir .aws-sam-aiops/build
 
       - name: Prepare SAM artifact bucket
         run: |
@@ -136,6 +147,48 @@ jobs:
           if [ "$INVOKE_ERROR" != "None" ]; then
             exit 1
           fi
+
+      - name: Deploy read-only AIOps stack
+        if: env.ENABLE_AIOPS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          AIOPS_STACK_NAME="${STACK_NAME}-aiops"
+          AIOPS_STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "$AIOPS_STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || true)
+          if [ "$AIOPS_STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+            aws cloudformation delete-stack --stack-name "$AIOPS_STACK_NAME" --region "$AWS_REGION"
+            aws cloudformation wait stack-delete-complete --stack-name "$AIOPS_STACK_NAME" --region "$AWS_REGION"
+          fi
+
+          PROFILE_QUEUE_URL=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProfileEventsQueueUrl'].OutputValue" \
+            --output text)
+          PROFILE_DLQ_URL=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProfileEventsDeadLetterQueueUrl'].OutputValue" \
+            --output text)
+
+          sam deploy \
+            --template-file .aws-sam-aiops/build/template.yaml \
+            --stack-name "$AIOPS_STACK_NAME" \
+            --region "$AWS_REGION" \
+            --capabilities CAPABILITY_IAM \
+            --s3-bucket "$SAM_ARTIFACT_BUCKET" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              ProjectName="${{ vars.PROJECT_NAME || 'github-profile-sam-dev' }}" \
+              BedrockModelId="$BEDROCK_MODEL_ID" \
+              NotificationEmail="$AIOPS_NOTIFICATION_EMAIL" \
+              SyntheticsAlarmPrefix="Synthetics-Alarm-${SYNTHETICS_CANARY_NAME}" \
+              SqsQueueUrls="$PROFILE_QUEUE_URL,$PROFILE_DLQ_URL"
 
       - name: Upload web assets
         run: |

@@ -10,6 +10,8 @@ The private service-to-service path lets the VPC-attached Lambda call the ECS Go
 
 The SAM stack also contains the assignment implementation for CloudWatch Synthetics, SNS to SQS profile events with an SQS dead-letter queue, and a CodeDeploy-backed Lambda canary release. See [AWS Synthetics、SNS/SQS/DLQ 与 API 灰度作业](docs/aws-synthetics-sns-sqs-canary.md).
 
+An optional, separately deployed AIOps stack listens for this project's CloudWatch alarms, uses Amazon Bedrock with allow-listed read-only tools to inspect logs and queue state, and publishes an incident report to a dedicated SNS topic. See [AWS AIOps Agent](docs/aiops-agent.md).
+
 ## What It Does
 
 - Internal demo login with three roles: `admin`, `operator`, `viewer`.
@@ -100,6 +102,8 @@ sam deploy --config-file infra/sam/samconfig.toml --template-file infra/sam/temp
 - Variable `VITE_SERVER_URL`
 - Optional variable `ENABLE_SYNTHETICS` (set `true` to create and start the health canary)
 - Optional variables `SYNTHETICS_CANARY_NAME`, `SYNTHETICS_SCHEDULE_EXPRESSION`, and `SYNTHETICS_RUNTIME_VERSION`
+- Optional variable `ENABLE_AIOPS` (set `true` to deploy the read-only Bedrock investigator)
+- Optional variables `BEDROCK_MODEL_ID` and `AIOPS_NOTIFICATION_EMAIL`
 - Optional variable `SAM_ARTIFACT_BUCKET`
 - Optional variable `ENABLE_MANAGED_VPC_NETWORKING`
 - Optional variable `INTERNET_GATEWAY_ID`
