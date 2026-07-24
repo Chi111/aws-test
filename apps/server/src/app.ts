@@ -5,6 +5,12 @@ import { logger } from "hono/logger";
 import { z } from "zod";
 import { canRead, canWrite, signSession, verifyPassword, verifySession, type SessionUser } from "./auth";
 import { createProfileUpdatedEvent } from "./profile-events";
+import {
+  cleanPerformanceEvents,
+  parsePerformanceBatch,
+  PERFORMANCE_BODY_LIMIT_BYTES,
+  sanitizePerformanceEvent
+} from "./performance-events";
 import { DrizzleRepository, type AppRepository, type GithubProfileInput } from "./repository";
 
 type Variables = {
@@ -20,6 +26,9 @@ type CreateAppOptions = {
   goServiceBaseUrl?: string;
   releaseVersion?: string;
   isProduction?: boolean;
+  performanceIngestEnabled?: boolean;
+  performanceHashSecret?: string;
+  now?: () => Date;
 };
 
 const loginSchema = z.object({
@@ -54,6 +63,31 @@ const goIntroductionSchema = z.object({
   }),
   introduction: z.string().min(1)
 });
+
+const performanceOverviewSchema = z
+  .object({
+    window: z.enum(["24h", "7d", "30d"]).default("24h"),
+    appId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .regex(/^[a-zA-Z][a-zA-Z0-9_.-]*$/)
+      .optional(),
+    route: z
+      .string()
+      .trim()
+      .min(1)
+      .max(512)
+      .regex(/^\/[^\s?#]*$/)
+      .optional(),
+    from: z.iso.datetime({ offset: true }).optional(),
+    to: z.iso.datetime({ offset: true }).optional()
+  })
+  .strict()
+  .refine((query) => Boolean(query.from) === Boolean(query.to), {
+    message: "from and to must be supplied together"
+  });
 
 function publicUser(user: SessionUser) {
   return {
@@ -100,6 +134,13 @@ export function createApp(options: CreateAppOptions = {}) {
   const fetchGoService = options.fetchGoService ?? fetch;
   const goServiceBaseUrl = options.goServiceBaseUrl ?? process.env.GO_SERVICE_BASE_URL ?? "";
   const releaseVersion = options.releaseVersion ?? process.env.RELEASE_VERSION ?? "local";
+  const isProduction = options.isProduction ?? process.env.NODE_ENV === "production";
+  const performanceIngestEnabled =
+    options.performanceIngestEnabled ??
+    (!isProduction || process.env.PERFORMANCE_INGEST_ENABLED === "true");
+  const performanceHashSecret =
+    options.performanceHashSecret ?? process.env.PERFORMANCE_HASH_SECRET ?? jwtSecret;
+  const now = options.now ?? (() => new Date());
   const app = new Hono<{ Variables: Variables }>();
 
   app.use(logger());
@@ -216,7 +257,6 @@ export function createApp(options: CreateAppOptions = {}) {
     }
     const sessionUser = { id: user.id, email: user.email, name: user.name, role: user.role };
     const token = await signSession(sessionUser, jwtSecret);
-    const isProduction = options.isProduction ?? process.env.NODE_ENV === "production";
     setCookie(c, "admin_session", token, {
       httpOnly: true,
       secure: isProduction,
@@ -228,7 +268,6 @@ export function createApp(options: CreateAppOptions = {}) {
   });
 
   app.post("/api/auth/logout", (c) => {
-    const isProduction = options.isProduction ?? process.env.NODE_ENV === "production";
     deleteCookie(c, "admin_session", {
       path: "/",
       secure: isProduction,
@@ -238,6 +277,103 @@ export function createApp(options: CreateAppOptions = {}) {
   });
 
   app.get("/api/auth/me", requireAuth, (c) => c.json({ user: publicUser(c.get("user")) }));
+
+  app.post("/api/performance/events", async (c) => {
+    if (!performanceIngestEnabled) {
+      c.header("cache-control", "no-store");
+      c.header("retry-after", "300");
+      return c.json({ error: "Performance event collection is disabled" }, 503);
+    }
+    if (!c.req.header("content-type")?.toLowerCase().startsWith("application/json")) {
+      return c.json({ error: "Content-Type must be application/json" }, 415);
+    }
+    const declaredLength = Number(c.req.header("content-length") ?? 0);
+    if (Number.isFinite(declaredLength) && declaredLength > PERFORMANCE_BODY_LIMIT_BYTES) {
+      return c.json({ error: "Performance event batch is too large" }, 413);
+    }
+
+    const body = await c.req.text();
+    if (Buffer.byteLength(body, "utf8") > PERFORMANCE_BODY_LIMIT_BYTES) {
+      return c.json({ error: "Performance event batch is too large" }, 413);
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return c.json({ error: "Performance event batch must be valid JSON" }, 400);
+    }
+    const parsed = parsePerformanceBatch(payload, now());
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: "Invalid performance event batch",
+          issues: parsed.error.issues.slice(0, 10).map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message
+          }))
+        },
+        400
+      );
+    }
+
+    const events = parsed.data.events.map(sanitizePerformanceEvent);
+    try {
+      const saved = isProduction
+        ? await repository.enqueuePerformanceEvents(events)
+        : await repository.savePerformanceEvents(cleanPerformanceEvents(events, performanceHashSecret));
+      c.header("cache-control", "no-store");
+      return c.json(
+        {
+          accepted: saved,
+          duplicates: events.length - saved,
+          mode: isProduction ? "queued" : "inline"
+        },
+        202
+      );
+    } catch (error) {
+      console.error("Failed to persist performance events", {
+        eventCount: events.length,
+        error: error instanceof Error ? error.message : "unknown error"
+      });
+      return c.json({ error: "Performance event collection is temporarily unavailable" }, 503);
+    }
+  });
+
+  app.get("/api/performance/overview", requireAuth, async (c) => {
+    const parsed = performanceOverviewSchema.safeParse({
+      window: c.req.query("window"),
+      appId: c.req.query("appId"),
+      route: c.req.query("route"),
+      from: c.req.query("from"),
+      to: c.req.query("to")
+    });
+    if (!parsed.success) {
+      return c.json({ error: "Invalid performance overview query" }, 400);
+    }
+    const currentTime = now();
+    const durationMs =
+      parsed.data.window === "24h"
+        ? 24 * 60 * 60 * 1000
+        : parsed.data.window === "7d"
+          ? 7 * 24 * 60 * 60 * 1000
+          : 30 * 24 * 60 * 60 * 1000;
+    const from = parsed.data.from ?? new Date(currentTime.getTime() - durationMs).toISOString();
+    const to = parsed.data.to ?? currentTime.toISOString();
+    if (Date.parse(from) >= Date.parse(to) || Date.parse(to) - Date.parse(from) > 90 * 24 * 60 * 60 * 1000) {
+      return c.json({ error: "Performance overview window must be positive and at most 90 days" }, 400);
+    }
+    c.header("cache-control", "private, max-age=30");
+    return c.json(
+      await repository.getPerformanceOverview({
+        from,
+        to,
+        window: parsed.data.from ? "custom" : parsed.data.window,
+        appId: parsed.data.appId,
+        route: parsed.data.route
+      })
+    );
+  });
 
   app.get("/api/profiles", requireAuth, async (c) => {
     return c.json({ profiles: await repository.listProfiles() });

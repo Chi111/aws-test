@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@github-profile-sam/env": "workspace:*",
+    "@github-profile-sam/performance-sdk": "workspace:*",
     "@github-profile-sam/ui": "workspace:*",
     "@hookform/resolvers": "^5.2.2",
     "@tailwindcss/vite": "^4.2.2",

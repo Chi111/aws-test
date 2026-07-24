@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Activity, ExternalLink, GitBranch, KeyRound, Lock, LogOut, Plus, Search, Shield, Sparkles, Trash2, UserRound } from "lucide-react";
+import { Activity, ExternalLink, Gauge, GitBranch, KeyRound, Lock, LogOut, Plus, RefreshCw, Search, Shield, Sparkles, Trash2, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { env } from "@github-profile-sam/env/web";
 
@@ -26,7 +26,37 @@ type IntroductionResult = {
   backendProof?: { runtime: string; service: string; dataSource: string };
   preview?: { prNumber: number; runtime: string; service: string; routing: string };
 };
-type View = "dashboard" | "introduction" | "profiles" | "fields" | "access";
+type View = "dashboard" | "performance" | "introduction" | "profiles" | "fields" | "access";
+type PerformanceWindow = "24h" | "7d" | "30d";
+type PerformanceApplication = { id: string; name: string };
+type TrendPoint = {
+  timestamp: string;
+  pageViews: number;
+  p95: number;
+  errorRate: number;
+};
+type VitalMetric = {
+  name: string;
+  value: number;
+  unit: string;
+  rating?: "good" | "needs-improvement" | "poor";
+};
+type ErrorRank = { message: string; count: number; lastSeen?: string };
+type SlowPageRank = { path: string; p95: number; samples: number };
+type PerformanceOverview = {
+  applications: PerformanceApplication[];
+  summary: {
+    pageViews: number;
+    sessions: number;
+    errorRate: number;
+    p95: number;
+  };
+  trend: TrendPoint[];
+  vitals: VitalMetric[];
+  errors: ErrorRank[];
+  slowPages: SlowPageRank[];
+  updatedAt?: string;
+};
 
 const apiBase = env.VITE_SERVER_URL.replace(/\/+$/, "");
 
@@ -121,6 +151,9 @@ function AdminApp() {
           <NavButton active={view === "dashboard"} onClick={() => setView("dashboard")} icon={<Activity />}>
             Dashboard
           </NavButton>
+          <NavButton active={view === "performance"} onClick={() => setView("performance")} icon={<Gauge />}>
+            Performance
+          </NavButton>
           <NavButton active={view === "introduction"} onClick={() => setView("introduction")} icon={<Sparkles />}>
             Go Introduction
           </NavButton>
@@ -163,6 +196,7 @@ function AdminApp() {
         {error ? <p className="banner error">{error}</p> : null}
         {status ? <p className="banner success">{status}</p> : null}
         {view === "dashboard" ? <Dashboard user={user} profiles={profiles} /> : null}
+        {view === "performance" ? <PerformanceDashboard /> : null}
         {view === "introduction" ? <IntroductionLookup /> : null}
         {view === "profiles" ? (
           <ProfilesView
@@ -360,6 +394,461 @@ function Dashboard({ user, profiles }: { user: User; profiles: Profile[] }) {
   );
 }
 
+function PerformanceDashboard() {
+  const [window, setWindow] = useState<PerformanceWindow>("24h");
+  const [appId, setAppId] = useState("");
+  const [overview, setOverview] = useState<PerformanceOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadOverview() {
+      setLoading(true);
+      setError("");
+      try {
+        const params = new URLSearchParams({ window });
+        if (appId) params.set("appId", appId);
+        const result = await api<unknown>(`/api/performance/overview?${params.toString()}`, {
+          signal: controller.signal
+        });
+        setOverview(normalizePerformanceOverview(result));
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Performance data could not be loaded");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
+    void loadOverview();
+    return () => controller.abort();
+  }, [window, appId, refreshKey]);
+
+  const hasData = overview
+    ? overview.summary.pageViews > 0 ||
+      overview.summary.sessions > 0 ||
+      overview.trend.length > 0 ||
+      overview.vitals.length > 0 ||
+      overview.errors.length > 0 ||
+      overview.slowPages.length > 0
+    : false;
+
+  return (
+    <section className="performance-dashboard" aria-labelledby="performance-title">
+      <div className="performance-toolbar">
+        <div>
+          <p className="eyebrow">real user monitoring</p>
+          <h2 id="performance-title">Application health</h2>
+          <p>Latency, Core Web Vitals, and client-side errors from cleaned telemetry.</p>
+        </div>
+        <div className="performance-filters">
+          <label>
+            Time range
+            <select value={window} onChange={(event) => setWindow(event.target.value as PerformanceWindow)}>
+              <option value="24h">Last 24 hours</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+            </select>
+          </label>
+          <label>
+            Application
+            <select value={appId} onChange={(event) => setAppId(event.target.value)}>
+              <option value="">All applications</option>
+              {overview?.applications.map((application) => (
+                <option key={application.id} value={application.id}>{application.name}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="refresh-button"
+            type="button"
+            onClick={() => setRefreshKey((current) => current + 1)}
+            disabled={loading}
+            aria-label="Refresh performance data"
+          >
+            <RefreshCw aria-hidden="true" className={loading ? "spinning" : ""} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {loading && !overview ? <PerformanceSkeleton /> : null}
+      {error ? (
+        <div className="performance-state error-state" role="alert">
+          <strong>Unable to load performance data</strong>
+          <span>{error}</span>
+          <button className="primary-button" type="button" onClick={() => setRefreshKey((current) => current + 1)}>
+            Try again
+          </button>
+        </div>
+      ) : null}
+      {!loading && !error && overview && !hasData ? (
+        <div className="performance-state">
+          <Gauge aria-hidden="true" />
+          <strong>No telemetry in this time range</strong>
+          <span>Once the SDK sends events, performance results will appear here.</span>
+        </div>
+      ) : null}
+      {overview && hasData ? (
+        <div className={loading ? "performance-content is-refreshing" : "performance-content"} aria-busy={loading}>
+          <div className="performance-summary">
+            <PerformanceMetric label="Page views" value={formatNumber(overview.summary.pageViews)} detail="clean events" />
+            <PerformanceMetric label="Sessions" value={formatNumber(overview.summary.sessions)} detail="unique sessions" />
+            <PerformanceMetric
+              label="Error rate"
+              value={formatPercent(overview.summary.errorRate)}
+              detail={overview.summary.errorRate <= 0.01 ? "within target" : "needs attention"}
+              tone={overview.summary.errorRate <= 0.01 ? "good" : "poor"}
+            />
+            <PerformanceMetric
+              label="P95 latency"
+              value={formatDuration(overview.summary.p95)}
+              detail="page load"
+              tone={overview.summary.p95 <= 2500 ? "good" : "poor"}
+            />
+          </div>
+
+          <div className="performance-main-grid">
+            <article className="performance-panel trend-panel">
+              <PanelHeading title="Performance trend" detail="Page-load latency" />
+              <PerformanceTrend data={overview.trend} />
+            </article>
+            <article className="performance-panel">
+              <PanelHeading title="Core Web Vitals" detail="75th percentile" />
+              <VitalsList vitals={overview.vitals} />
+            </article>
+          </div>
+
+          <div className="performance-rank-grid">
+            <article className="performance-panel">
+              <PanelHeading title="Top errors" detail="Most frequent exceptions" />
+              <ErrorsTable errors={overview.errors} />
+            </article>
+            <article className="performance-panel">
+              <PanelHeading title="Slow pages" detail="Ranked by P95 latency" />
+              <SlowPagesTable pages={overview.slowPages} />
+            </article>
+          </div>
+          {overview.updatedAt ? (
+            <p className="data-freshness">Last updated {formatTimestamp(overview.updatedAt)}</p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function PerformanceSkeleton() {
+  return (
+    <div className="performance-skeleton" role="status" aria-label="Loading performance data">
+      <div className="performance-summary">
+        {[0, 1, 2, 3].map((item) => <div className="skeleton-card" key={item} />)}
+      </div>
+      <div className="skeleton-panel" />
+    </div>
+  );
+}
+
+function PerformanceMetric({
+  label,
+  value,
+  detail,
+  tone
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: "good" | "poor";
+}) {
+  return (
+    <article className={`performance-metric${tone ? ` ${tone}` : ""}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
+  );
+}
+
+function PanelHeading({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="panel-heading">
+      <h3>{title}</h3>
+      <span>{detail}</span>
+    </div>
+  );
+}
+
+function PerformanceTrend({ data }: { data: TrendPoint[] }) {
+  if (data.length === 0) return <InlineEmpty message="No trend samples available." />;
+
+  const chartWidth = 720;
+  const chartHeight = 220;
+  const plotTop = 16;
+  const plotBottom = 184;
+  const values = data.map((point) => point.p95);
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = Math.max(max - min, 1);
+  const coordinates = data.map((point, index) => {
+    const x = data.length === 1 ? chartWidth / 2 : (index / (data.length - 1)) * chartWidth;
+    const y = plotBottom - ((point.p95 - min) / range) * (plotBottom - plotTop);
+    return { x, y, point };
+  });
+  const line = coordinates.map(({ x, y }) => `${x},${y}`).join(" ");
+  const area = `0,${plotBottom} ${line} ${chartWidth},${plotBottom}`;
+  const labelIndexes = Array.from(new Set([0, Math.floor((data.length - 1) / 2), data.length - 1]));
+
+  return (
+    <div className="trend-chart">
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-labelledby="trend-chart-title trend-chart-desc">
+        <title id="trend-chart-title">Page-load latency over time</title>
+        <desc id="trend-chart-desc">
+          Values range from {formatDuration(min)} to {formatDuration(max)} across {data.length} samples.
+        </desc>
+        {[0, 1, 2, 3].map((lineIndex) => {
+          const y = plotTop + ((plotBottom - plotTop) / 3) * lineIndex;
+          return <line className="chart-grid-line" key={lineIndex} x1="0" x2={chartWidth} y1={y} y2={y} />;
+        })}
+        <polygon className="chart-area" points={area} />
+        <polyline className="chart-line" points={line} />
+        {coordinates.map(({ x, y, point }, index) => (
+          <circle key={`${point.timestamp}-${index}`} className="chart-point" cx={x} cy={y} r="4">
+            <title>{`${formatTimestamp(point.timestamp)}: ${formatDuration(point.p95)}`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="chart-axis" aria-hidden="true">
+        {labelIndexes.map((index) => <span key={index}>{formatChartTime(data[index].timestamp)}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function VitalsList({ vitals }: { vitals: VitalMetric[] }) {
+  if (vitals.length === 0) return <InlineEmpty message="No Web Vitals samples available." />;
+  return (
+    <dl className="vitals-list">
+      {vitals.map((vital) => {
+        const rating = vital.rating ?? rateVital(vital.name, vital.value);
+        return (
+          <div key={vital.name}>
+            <dt>
+              <span>{vital.name.toUpperCase()}</span>
+              <small>{vitalDescription(vital.name)}</small>
+            </dt>
+            <dd>
+              <strong>{formatVital(vital)}</strong>
+              <span className={`rating ${rating}`}>{rating.replace("-", " ")}</span>
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+function ErrorsTable({ errors }: { errors: ErrorRank[] }) {
+  if (errors.length === 0) return <InlineEmpty message="No client errors recorded." />;
+  return (
+    <div className="table-scroll">
+      <table className="performance-table">
+        <thead><tr><th scope="col">Error</th><th scope="col">Count</th><th scope="col">Last seen</th></tr></thead>
+        <tbody>
+          {errors.slice(0, 8).map((error, index) => (
+            <tr key={`${error.message}-${index}`}>
+              <td><span className="error-message">{error.message}</span></td>
+              <td>{formatNumber(error.count)}</td>
+              <td>{error.lastSeen ? formatTimestamp(error.lastSeen) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SlowPagesTable({ pages }: { pages: SlowPageRank[] }) {
+  if (pages.length === 0) return <InlineEmpty message="No page latency samples available." />;
+  return (
+    <div className="table-scroll">
+      <table className="performance-table">
+        <thead><tr><th scope="col">Page</th><th scope="col">P95</th><th scope="col">Samples</th></tr></thead>
+        <tbody>
+          {pages.slice(0, 8).map((page, index) => (
+            <tr key={`${page.path}-${index}`}>
+              <td><code>{page.path}</code></td>
+              <td>{formatDuration(page.p95)}</td>
+              <td>{formatNumber(page.samples)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function InlineEmpty({ message }: { message: string }) {
+  return <p className="inline-empty">{message}</p>;
+}
+
+function normalizePerformanceOverview(input: unknown): PerformanceOverview {
+  const outer = asRecord(input);
+  const source = asRecord(outer.data ?? outer);
+  const summary = asRecord(source.summary ?? source.metrics);
+  const applications = asArray(source.applications ?? source.apps).map((entry) => {
+    if (typeof entry === "string") return { id: entry, name: entry };
+    const item = asRecord(entry);
+    return { id: asString(item.id ?? item.appId ?? item.key), name: asString(item.name ?? item.label ?? item.id, "Unnamed app") };
+  }).filter((application) => application.id);
+  const trend = asArray(source.trend ?? source.trends ?? source.series ?? source.timeline).map((entry, index) => {
+    const item = asRecord(entry);
+    return {
+      timestamp: asString(item.timestamp ?? item.time ?? item.bucket ?? item.date, String(index)),
+      pageViews: asNumber(item.pageViews ?? item.views ?? item.count ?? item.events),
+      p95: asNumber(item.p95 ?? item.p95Latency ?? item.latencyP95 ?? item.avgDuration ?? item.duration),
+      errorRate: normalizeRate(item.errorRate ?? item.errors)
+    };
+  });
+  const rawVitals = source.vitals ?? source.webVitals ?? source.coreWebVitals;
+  const vitals = Array.isArray(rawVitals)
+    ? rawVitals.map(normalizeVital)
+    : Object.entries(asRecord(rawVitals)).map(([name, value]) => normalizeVital({ name, ...(typeof value === "object" && value ? value : { value }) }));
+  const errors = asArray(source.errors ?? source.topErrors).map((entry) => {
+    const item = asRecord(entry);
+    return {
+      message: asString(item.message ?? item.name ?? item.error ?? item.type, "Unknown error"),
+      count: asNumber(item.count ?? item.events ?? item.total),
+      lastSeen: optionalString(item.lastSeen ?? item.timestamp ?? item.latestAt)
+    };
+  });
+  const slowPages = asArray(source.slowPages ?? source.pages ?? source.topSlowPages).map((entry) => {
+    const item = asRecord(entry);
+    return {
+      path: asString(item.path ?? item.page ?? item.url ?? item.route, "Unknown page"),
+      p95: asNumber(item.p95 ?? item.p95Latency ?? item.latencyP95 ?? item.duration),
+      samples: asNumber(item.samples ?? item.count ?? item.views)
+    };
+  });
+
+  return {
+    applications,
+    summary: {
+      pageViews: asNumber(summary.pageViews ?? summary.views ?? summary.events ?? summary.totalEvents),
+      sessions: asNumber(summary.sessions ?? summary.totalSessions ?? summary.uniqueSessions),
+      errorRate: normalizeRate(summary.errorRate ?? summary.errors),
+      p95: asNumber(summary.p95 ?? summary.p95Latency ?? summary.latencyP95 ?? summary.pageLoadP95)
+    },
+    trend,
+    vitals: vitals.filter((vital) => vital.name && Number.isFinite(vital.value)),
+    errors,
+    slowPages,
+    updatedAt: optionalString(source.updatedAt ?? source.generatedAt)
+  };
+}
+
+function normalizeVital(input: unknown): VitalMetric {
+  const item = asRecord(input);
+  const name = asString(item.name ?? item.metric ?? item.key);
+  const rawRating = asString(item.rating ?? item.status);
+  const rating = rawRating === "good" || rawRating === "poor"
+    ? rawRating
+    : rawRating === "needs-improvement" || rawRating === "needs improvement"
+      ? "needs-improvement"
+      : undefined;
+  return {
+    name,
+    value: asNumber(item.value ?? item.p75 ?? item.percentile75),
+    unit: asString(item.unit, name.toLowerCase() === "cls" ? "" : "ms"),
+    rating
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function asNumber(value: unknown): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeRate(value: unknown): number {
+  const rate = asNumber(value);
+  return rate > 1 ? rate / 100 : rate;
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en", { notation: value >= 10_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
+}
+
+function formatPercent(value: number): string {
+  return new Intl.NumberFormat("en", { style: "percent", maximumFractionDigits: 2 }).format(value);
+}
+
+function formatDuration(value: number): string {
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)} s`;
+  return `${Math.round(value)} ms`;
+}
+
+function formatVital(vital: VitalMetric): string {
+  if (!vital.unit) return vital.value.toFixed(3);
+  if (vital.unit === "ms") return formatDuration(vital.value);
+  return `${vital.value.toFixed(2)} ${vital.unit}`;
+}
+
+function formatTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function formatChartTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit" }).format(date);
+}
+
+function rateVital(name: string, value: number): "good" | "needs-improvement" | "poor" {
+  const metric = name.toLowerCase();
+  const thresholds: Record<string, [number, number]> = {
+    lcp: [2500, 4000],
+    inp: [200, 500],
+    cls: [0.1, 0.25],
+    fcp: [1800, 3000],
+    ttfb: [800, 1800]
+  };
+  const [good, poor] = thresholds[metric] ?? [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+  if (value <= good) return "good";
+  if (value <= poor) return "needs-improvement";
+  return "poor";
+}
+
+function vitalDescription(name: string): string {
+  const descriptions: Record<string, string> = {
+    lcp: "Loading",
+    inp: "Interaction",
+    cls: "Visual stability",
+    fcp: "First paint",
+    ttfb: "Server response"
+  };
+  return descriptions[name.toLowerCase()] ?? "User experience";
+}
+
 function ProfilesView({ canWrite, profiles, onLoaded, onError, onStatus }: { canWrite: boolean; profiles: Profile[]; onLoaded: () => Promise<void>; onError: (value: string) => void; onStatus: (value: string) => void }) {
   const [token, setToken] = useState("");
   async function submit(event: FormEvent) {
@@ -530,6 +1019,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 }
 
 function viewTitle(view: View) {
+  if (view === "performance") return "Performance";
   if (view === "introduction") return "Go Introduction";
   if (view === "profiles") return "GitHub Profiles";
   if (view === "fields") return "Custom Fields";

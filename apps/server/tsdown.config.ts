@@ -6,7 +6,8 @@ export default defineConfig({
     "./src/lambda.ts",
     "./src/setup.ts",
     "./src/profile-event-worker.ts",
-    "./src/profile-event-outbox-publisher.ts"
+    "./src/profile-event-outbox-publisher.ts",
+    "./src/performance-log-worker.ts"
   ],
   format: "esm",
   outDir: "./dist",

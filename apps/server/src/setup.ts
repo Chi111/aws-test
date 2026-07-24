@@ -177,6 +177,60 @@ export async function handler(event: SetupEvent = {}) {
       create index if not exists profile_event_outbox_pending_idx
       on profile_event_outbox (published_at, created_at);
     `);
+    await client.query(`
+      create table if not exists performance_events_raw (
+        event_id uuid primary key,
+        event_type varchar(32) not null,
+        payload jsonb not null,
+        attempt_count integer not null default 0,
+        processing_at timestamptz,
+        processed_at timestamptz,
+        rejected_at timestamptz,
+        rejection_reason varchar(500),
+        received_at timestamptz not null default now()
+      );
+    `);
+    await client.query(`
+      create index if not exists performance_events_raw_pending_idx
+      on performance_events_raw (processed_at, rejected_at, received_at);
+    `);
+    await client.query(`
+      create table if not exists performance_events (
+        event_id uuid primary key,
+        event_type varchar(32) not null,
+        occurred_at timestamptz not null,
+        app_id varchar(80) not null,
+        session_hash varchar(64) not null,
+        route varchar(512) not null,
+        name varchar(80) not null,
+        value double precision not null,
+        unit varchar(16) not null,
+        rating varchar(32),
+        app_version varchar(80),
+        sdk_version varchar(80) not null,
+        initiator_type varchar(80),
+        navigation_type varchar(32),
+        status_code integer,
+        message varchar(500),
+        created_at timestamptz not null default now()
+      );
+    `);
+    await client.query(`
+      create index if not exists performance_events_occurred_at_idx
+      on performance_events (occurred_at);
+    `);
+    await client.query(`
+      create index if not exists performance_events_app_occurred_at_idx
+      on performance_events (app_id, occurred_at);
+    `);
+    await client.query(`
+      create index if not exists performance_events_route_occurred_at_idx
+      on performance_events (route, occurred_at);
+    `);
+    await client.query(`
+      create index if not exists performance_events_name_occurred_at_idx
+      on performance_events (name, occurred_at);
+    `);
 
     for (const user of users) {
       await client.query(

@@ -7,4 +7,7 @@
 !apps/go-server/cmd/**
 !apps/go-server/internal/
 !apps/go-server/internal/**
+!apps/server/
+!apps/server/dist/
+!apps/server/dist/**
 !global-bundle.pem
