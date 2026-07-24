@@ -42,8 +42,9 @@ jobs:
 
       - uses: aws-actions/setup-sam@v2
 
-      - name: Validate and build the AIOps SAM template
+      - name: Validate SAM templates and build AIOps
         run: |
+          sam validate --lint --template-file infra/sam/template.yaml
           sam validate --lint --template-file infra/sam/aiops-template.yaml
           sam build --template-file infra/sam/aiops-template.yaml
 
