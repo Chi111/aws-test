@@ -1,5 +1,10 @@
 # 性能日志采集、ECS 清洗与可视化
 
+正式演示入口为
+[https://github-profile-sam-chi111.chi435900020.workers.dev](https://github-profile-sam-chi111.chi435900020.workers.dev)。
+登录后点击左侧 **Performance**。PR 预览只验证隔离的 Go 服务路由，不提供管理后台登录；SAM 输出的
+S3 website URL 是静态源站产物，也不是启用凭证登录的正式入口。
+
 本功能把浏览器性能事件分成“接收、清洗、查询”三个边界。API 先把经过大小和结构校验的批次写入
 Aurora 原始事件表，私有 ECS Fargate Worker 再异步认领待处理记录、脱敏并写入清洗表，统计 API
 只查询清洗后的数据。这样接收请求不必等待聚合计算，清洗失败也可以从原始记录定位和重试。
