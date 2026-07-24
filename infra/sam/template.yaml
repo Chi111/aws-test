@@ -596,6 +596,11 @@ Resources:
   PerformanceWorkerHashSecret:
     Type: AWS::SecretsManager::Secret
     Condition: CreatePerformanceLogWorker
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
     Properties:
       Description: !Sub "HMAC key used by ${ProjectName} to pseudonymize performance session IDs."
       SecretString: !Ref PerformanceHashSecret
@@ -747,6 +752,11 @@ Resources:
   GoServiceIngressFromLambda:
     Type: AWS::EC2::SecurityGroupIngress
     Condition: CreateCloudMapIntegration
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
     Properties:
       GroupId: !Ref GoServiceSecurityGroupId
       IpProtocol: tcp
@@ -882,6 +892,11 @@ Resources:
   AuroraIngressFromGoService:
     Type: AWS::EC2::SecurityGroupIngress
     Condition: CreateCloudMapIntegration
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
     Properties:
       GroupId: !Ref AuroraSecurityGroupId
       IpProtocol: tcp
