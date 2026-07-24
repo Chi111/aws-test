@@ -105,6 +105,83 @@ Parameters:
     Type: String
     Default: us-east-2c
     Description: Availability Zone for the second SAM-managed private subnet.
+  EnablePerformanceLogWorker:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Create the private ECS Fargate worker that cleans pending performance logs.
+  PerformanceWorkerImageUri:
+    Type: String
+    Default: ""
+    Description: ECR image URI for the performance log worker. Required when EnablePerformanceLogWorker is true.
+  PerformanceHashSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    AllowedPattern: "^$|^.{32,}$"
+    ConstraintDescription: Leave empty while the worker is disabled, or provide at least 32 characters.
+    Description: HMAC secret used to irreversibly pseudonymize browser session IDs.
+  PerformanceWorkerDesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 10
+    Description: Number of performance log cleaner tasks to keep running.
+  PerformanceWorkerPollIntervalMs:
+    Type: Number
+    Default: 5000
+    MinValue: 1000
+    MaxValue: 60000
+    Description: Delay between database polling cycles when no pending logs are found.
+  PerformanceWorkerBatchSize:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 1000
+    Description: Maximum pending performance logs claimed and cleaned in one cycle.
+  PerformanceWorkerLogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues:
+      - 1
+      - 3
+      - 5
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 150
+      - 180
+      - 365
+    Description: CloudWatch retention period for performance worker application logs.
+  PerformanceRawRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 365
+    Description: Days to retain raw performance event envelopes, including stale pending rows.
+  PerformanceCleanRetentionDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    MaxValue: 3650
+    Description: Days to retain cleaned performance analytics events.
+  PerformanceIngestBurstLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 500
+    Description: API Gateway burst limit for the public performance ingestion route.
+  PerformanceIngestRateLimit:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 500
+    Description: API Gateway steady-state requests per second for the public performance ingestion route.
 
 Rules:
   RequireGoServiceSecurityGroupForCloudMap:
@@ -112,11 +189,19 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref GoServiceSecurityGroupId, ""]]
         AssertDescription: GoServiceSecurityGroupId is required when Cloud Map integration is enabled.
+  RequirePerformanceWorkerImageWhenEnabled:
+    RuleCondition: !Equals [!Ref EnablePerformanceLogWorker, "true"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref PerformanceWorkerImageUri, ""]]
+        AssertDescription: PerformanceWorkerImageUri is required when EnablePerformanceLogWorker is true.
+      - Assert: !Not [!Equals [!Ref PerformanceHashSecret, ""]]
+        AssertDescription: PerformanceHashSecret with at least 32 characters is required when EnablePerformanceLogWorker is true.
 
 Conditions:
   CreateManagedVpcNetworking: !Equals [!Ref EnableManagedVpcNetworking, "true"]
   CreateCloudMapIntegration: !Equals [!Ref EnableCloudMapIntegration, "true"]
   CreateSynthetics: !Equals [!Ref EnableSynthetics, "true"]
+  CreatePerformanceLogWorker: !Equals [!Ref EnablePerformanceLogWorker, "true"]
 
 Globals:
   Function:
@@ -455,6 +540,181 @@ Resources:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
 
+  PerformanceWorkerCluster:
+    Type: AWS::ECS::Cluster
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      ClusterName: !Sub "${ProjectName}-performance-worker"
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PerformanceWorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      GroupDescription: !Sub "${ProjectName} private performance worker egress"
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          DestinationSecurityGroupId: !Ref AuroraSecurityGroupId
+          Description: Connect only to the existing Aurora PostgreSQL security group.
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Reach ECR, Secrets Manager, and CloudWatch through NAT or VPC endpoints.
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PerformanceWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}/performance-worker"
+      RetentionInDays: !Ref PerformanceWorkerLogRetentionDays
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PerformanceWorkerDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      Description: !Sub "Aurora connection string used only by ${ProjectName} performance log cleaner tasks."
+      SecretString: !Ref DatabaseUrl
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PerformanceWorkerHashSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      Description: !Sub "HMAC key used by ${ProjectName} to pseudonymize performance session IDs."
+      SecretString: !Ref PerformanceHashSecret
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PerformanceWorkerTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      Description: Pulls the worker image, writes logs, and injects the worker runtime secrets.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+      Policies:
+        - PolicyName: ReadOnlyPerformanceWorkerSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref PerformanceWorkerDatabaseSecret
+                  - !Ref PerformanceWorkerHashSecret
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PerformanceWorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      Family: !Sub "${ProjectName}-performance-worker"
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt PerformanceWorkerTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: performance-log-worker
+          Image: !Ref PerformanceWorkerImageUri
+          Essential: true
+          Command:
+            - node
+            - dist/performance-log-worker.mjs
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: DATABASE_SSL_CA_PATH
+              Value: /etc/ssl/certs/aws-rds-global-bundle.pem
+            - Name: PERFORMANCE_WORKER_POLL_INTERVAL_MS
+              Value: !Sub "${PerformanceWorkerPollIntervalMs}"
+            - Name: PERFORMANCE_WORKER_BATCH_SIZE
+              Value: !Sub "${PerformanceWorkerBatchSize}"
+            - Name: PERFORMANCE_RAW_RETENTION_DAYS
+              Value: !Sub "${PerformanceRawRetentionDays}"
+            - Name: PERFORMANCE_CLEAN_RETENTION_DAYS
+              Value: !Sub "${PerformanceCleanRetentionDays}"
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref PerformanceWorkerDatabaseSecret
+            - Name: PERFORMANCE_HASH_SECRET
+              ValueFrom: !Ref PerformanceWorkerHashSecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PerformanceWorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: cleaner
+          StopTimeout: 30
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PerformanceWorkerService:
+    Type: AWS::ECS::Service
+    Condition: CreatePerformanceLogWorker
+    DependsOn:
+      - PerformanceWorkerAuroraIngress
+    Properties:
+      ServiceName: performance-log-worker
+      Cluster: !Ref PerformanceWorkerCluster
+      TaskDefinition: !Ref PerformanceWorkerTaskDefinition
+      DesiredCount: !Ref PerformanceWorkerDesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      EnableExecuteCommand: false
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref PerformanceWorkerSecurityGroup
+          Subnets: !If
+            - CreateManagedVpcNetworking
+            - - !Ref ManagedPrivateSubnet1
+              - !Ref ManagedPrivateSubnet2
+            - !Ref PrivateSubnetIds
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
   CloudMapNamespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
     Condition: CreateCloudMapIntegration
@@ -630,6 +890,17 @@ Resources:
       SourceSecurityGroupId: !Ref GoServiceSecurityGroupId
       Description: Allow the private ECS Go service to connect to Aurora PostgreSQL.
 
+  PerformanceWorkerAuroraIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreatePerformanceLogWorker
+    Properties:
+      GroupId: !Ref AuroraSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref PerformanceWorkerSecurityGroup
+      Description: Allow only the private performance worker tasks to connect to Aurora PostgreSQL.
+
   ApiFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -651,6 +922,7 @@ Resources:
           CORS_ORIGIN: !Ref CorsOrigin
           RELEASE_VERSION: !Ref ReleaseVersion
           METRIC_SERVICE_NAME: !Ref ProjectName
+          PERFORMANCE_INGEST_ENABLED: !Ref EnablePerformanceLogWorker
           GO_SERVICE_BASE_URL: !If
             - CreateCloudMapIntegration
             - !Sub "http://go.${CloudMapNamespaceName}:8080"
@@ -667,6 +939,15 @@ Resources:
         - AWSLambdaBasicExecutionRole
         - AWSLambdaVPCAccessExecutionRole
       Events:
+        PerformanceIngest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ApiHttpApi
+            Path: /api/performance/events
+            Method: POST
+            RouteSettings:
+              ThrottlingBurstLimit: !Ref PerformanceIngestBurstLimit
+              ThrottlingRateLimit: !Ref PerformanceIngestRateLimit
         Proxy:
           Type: HttpApi
           Properties:
@@ -802,3 +1083,15 @@ Outputs:
     Condition: CreateCloudMapIntegration
     Description: Private Go service DNS name resolvable from Lambda subnets.
     Value: !Sub "go.${CloudMapNamespaceName}"
+  PerformanceWorkerClusterName:
+    Condition: CreatePerformanceLogWorker
+    Description: ECS cluster running the private performance log cleaner.
+    Value: !Ref PerformanceWorkerCluster
+  PerformanceWorkerServiceName:
+    Condition: CreatePerformanceLogWorker
+    Description: ECS service running the private performance log cleaner.
+    Value: !GetAtt PerformanceWorkerService.Name
+  PerformanceWorkerLogGroupName:
+    Condition: CreatePerformanceLogWorker
+    Description: CloudWatch log group for performance log cleaner diagnostics.
+    Value: !Ref PerformanceWorkerLogGroup

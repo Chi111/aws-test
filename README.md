@@ -12,6 +12,8 @@ The SAM stack also contains the assignment implementation for CloudWatch Synthet
 
 An optional, separately deployed AIOps stack listens for this project's CloudWatch alarms, uses Amazon Bedrock with allow-listed read-only tools to inspect logs and queue state, and publishes an incident report to a dedicated SNS topic. See [AWS AIOps Agent](docs/aiops-agent.md).
 
+The performance monitoring assignment adds a browser SDK, a raw event ingest path, an optional private ECS Fargate cleaner, analytics APIs, and a dashboard. See [性能日志采集、ECS 清洗与可视化](docs/performance-monitoring.md) for architecture, deployment, privacy, and acceptance checks.
+
 ## What It Does
 
 - Internal demo login with three roles: `admin`, `operator`, `viewer`.
@@ -109,6 +111,14 @@ sam deploy --config-file infra/sam/samconfig.toml --template-file infra/sam/temp
 - Optional variable `INTERNET_GATEWAY_ID`
 - Optional variables `MANAGED_PUBLIC_SUBNET_CIDR`, `MANAGED_PRIVATE_SUBNET_1_CIDR`, `MANAGED_PRIVATE_SUBNET_2_CIDR`
 - Optional variables `MANAGED_PUBLIC_SUBNET_AZ`, `MANAGED_PRIVATE_SUBNET_1_AZ`, `MANAGED_PRIVATE_SUBNET_2_AZ`
+- Optional variable `ENABLE_PERFORMANCE_LOG_WORKER` (default `false`)
+- When enabled: secret `PERFORMANCE_HASH_SECRET` and optional variable `PERFORMANCE_WORKER_ECR_REPOSITORY`;
+  the workflow builds and supplies `PERFORMANCE_WORKER_IMAGE_URI`
+- Optional variables `PERFORMANCE_WORKER_DESIRED_COUNT`, `PERFORMANCE_WORKER_POLL_INTERVAL_MS`,
+  `PERFORMANCE_WORKER_BATCH_SIZE`, and `PERFORMANCE_WORKER_LOG_RETENTION_DAYS`
+- Optional variables `PERFORMANCE_RAW_RETENTION_DAYS`, `PERFORMANCE_CLEAN_RETENTION_DAYS`,
+  `PERFORMANCE_INGEST_BURST_LIMIT`, and `PERFORMANCE_INGEST_RATE_LIMIT`
+- Optional SDK variables `VITE_PERFORMANCE_ENABLED` and `VITE_PERFORMANCE_APP_ID`
 
 For your current AWS dev setup, use these values:
 

@@ -15,6 +15,13 @@
       "when": 1784627679286,
       "tag": "0001_deep_newton_destine",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784870400000,
+      "tag": "0002_performance_events",
+      "breakpoints": true
     }
   ]
 }

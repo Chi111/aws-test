@@ -24,6 +24,13 @@ jobs:
       ENABLE_AIOPS: ${{ vars.ENABLE_AIOPS || 'false' }}
       BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0' }}
       AIOPS_NOTIFICATION_EMAIL: ${{ vars.AIOPS_NOTIFICATION_EMAIL }}
+      ENABLE_PERFORMANCE_LOG_WORKER: ${{ vars.ENABLE_PERFORMANCE_LOG_WORKER || 'false' }}
+      PERFORMANCE_WORKER_ECR_REPOSITORY: ${{ vars.PERFORMANCE_WORKER_ECR_REPOSITORY || 'github-profile-sam-performance-worker' }}
+      PERFORMANCE_WORKER_IMAGE_URI: ""
+      VITE_PERFORMANCE_ENABLED: ${{ vars.VITE_PERFORMANCE_ENABLED || vars.ENABLE_PERFORMANCE_LOG_WORKER || 'false' }}
+      VITE_PERFORMANCE_APP_ID: ${{ vars.VITE_PERFORMANCE_APP_ID || 'github-profile-web' }}
+      VITE_RELEASE_VERSION: ${{ github.sha }}
+      VITE_APP_ENV: production
     steps:
       - uses: actions/checkout@v6
 
@@ -45,6 +52,32 @@ jobs:
       - run: pnpm test
       - run: pnpm check-types
       - run: pnpm build
+
+      - uses: docker/setup-buildx-action@v3
+        if: env.ENABLE_PERFORMANCE_LOG_WORKER == 'true'
+
+      - name: Build and push performance log worker
+        if: env.ENABLE_PERFORMANCE_LOG_WORKER == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          if ! aws ecr describe-repositories --repository-names "$PERFORMANCE_WORKER_ECR_REPOSITORY" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$PERFORMANCE_WORKER_ECR_REPOSITORY" \
+              --image-scanning-configuration scanOnPush=true
+          fi
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login --username AWS --password-stdin "$REGISTRY"
+          PERFORMANCE_WORKER_IMAGE_URI="${REGISTRY}/${PERFORMANCE_WORKER_ECR_REPOSITORY}:${GITHUB_SHA}"
+          docker buildx build \
+            --platform linux/arm64 \
+            --file apps/server/Dockerfile.performance-worker \
+            --tag "$PERFORMANCE_WORKER_IMAGE_URI" \
+            --push \
+            .
+          echo "PERFORMANCE_WORKER_IMAGE_URI=$PERFORMANCE_WORKER_IMAGE_URI" >> "$GITHUB_ENV"
 
       - uses: aws-actions/setup-sam@v2
 
@@ -127,6 +160,17 @@ jobs:
           ManagedPublicSubnetAz=${{ vars.MANAGED_PUBLIC_SUBNET_AZ || 'us-east-2a' }}
           ManagedPrivateSubnet1Az=${{ vars.MANAGED_PRIVATE_SUBNET_1_AZ || 'us-east-2b' }}
           ManagedPrivateSubnet2Az=${{ vars.MANAGED_PRIVATE_SUBNET_2_AZ || 'us-east-2c' }}
+          EnablePerformanceLogWorker="$ENABLE_PERFORMANCE_LOG_WORKER"
+          PerformanceWorkerImageUri="$PERFORMANCE_WORKER_IMAGE_URI"
+          PerformanceHashSecret="${{ secrets.PERFORMANCE_HASH_SECRET }}"
+          PerformanceWorkerDesiredCount=${{ vars.PERFORMANCE_WORKER_DESIRED_COUNT || '1' }}
+          PerformanceWorkerPollIntervalMs=${{ vars.PERFORMANCE_WORKER_POLL_INTERVAL_MS || '5000' }}
+          PerformanceWorkerBatchSize=${{ vars.PERFORMANCE_WORKER_BATCH_SIZE || '100' }}
+          PerformanceWorkerLogRetentionDays=${{ vars.PERFORMANCE_WORKER_LOG_RETENTION_DAYS || '30' }}
+          PerformanceRawRetentionDays=${{ vars.PERFORMANCE_RAW_RETENTION_DAYS || '7' }}
+          PerformanceCleanRetentionDays=${{ vars.PERFORMANCE_CLEAN_RETENTION_DAYS || '90' }}
+          PerformanceIngestBurstLimit=${{ vars.PERFORMANCE_INGEST_BURST_LIMIT || '10' }}
+          PerformanceIngestRateLimit=${{ vars.PERFORMANCE_INGEST_RATE_LIMIT || '5' }}
 
       - name: Run database setup inside VPC
         run: |

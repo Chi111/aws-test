@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@github-profile-sam/config": "workspace:*",
+    "@github-profile-sam/performance-sdk": "workspace:*",
     "@types/node": "catalog:",
     "@types/pg": "^8.16.0",
     "tsdown": "^0.21.9",
