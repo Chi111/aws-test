@@ -140,6 +140,7 @@ export function createApp(options: CreateAppOptions = {}) {
     (!isProduction || process.env.PERFORMANCE_INGEST_ENABLED === "true");
   const performanceHashSecret =
     options.performanceHashSecret ?? process.env.PERFORMANCE_HASH_SECRET ?? jwtSecret;
+  const corsOrigin = options.corsOrigin ?? process.env.CORS_ORIGIN ?? "http://localhost:3001";
   const now = options.now ?? (() => new Date());
   const app = new Hono<{ Variables: Variables }>();
 
@@ -147,7 +148,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(
     "/*",
     cors({
-      origin: options.corsOrigin ?? process.env.CORS_ORIGIN ?? "http://localhost:3001",
+      origin: corsOrigin,
       allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
       allowHeaders: ["content-type"],
       credentials: true
@@ -284,8 +285,19 @@ export function createApp(options: CreateAppOptions = {}) {
       c.header("retry-after", "300");
       return c.json({ error: "Performance event collection is disabled" }, 503);
     }
-    if (!c.req.header("content-type")?.toLowerCase().startsWith("application/json")) {
-      return c.json({ error: "Content-Type must be application/json" }, 415);
+    const mediaType = c.req.header("content-type")?.toLowerCase().split(";", 1)[0]?.trim();
+    if (mediaType !== "application/json" && mediaType !== "text/plain") {
+      return c.json({ error: "Content-Type must be application/json or text/plain" }, 415);
+    }
+    const requestOrigin = c.req.header("origin");
+    if (
+      isProduction &&
+      mediaType === "text/plain" &&
+      corsOrigin !== "*" &&
+      requestOrigin &&
+      requestOrigin !== corsOrigin
+    ) {
+      return c.json({ error: "Performance event origin is not allowed" }, 403);
     }
     const declaredLength = Number(c.req.header("content-length") ?? 0);
     if (Number.isFinite(declaredLength) && declaredLength > PERFORMANCE_BODY_LIMIT_BYTES) {

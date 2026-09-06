@@ -14,6 +14,26 @@ function jsonRequest(path: string, body: unknown, cookie?: string) {
   });
 }
 
+function performancePageViewBatch(eventId: string) {
+  return {
+    events: [
+      {
+        eventId,
+        eventType: "page-view",
+        occurredAt: "2026-07-23T23:59:00.000Z",
+        appId: "github-profile-web",
+        sessionId: "opaque_session_123456",
+        route: "/",
+        name: "page-view",
+        value: 1,
+        unit: "count",
+        appVersion: "v-1.2.3",
+        sdkVersion: "browser-0.1.0"
+      }
+    ]
+  };
+}
+
 function cookieFrom(response: Response) {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
 }
@@ -258,6 +278,113 @@ describe("admin MVP API", () => {
     expect(JSON.stringify(savePerformanceEvents.mock.calls)).not.toContain("opaque_session_123456");
   });
 
+  it("accepts text/plain JSON batches sent by navigator.sendBeacon", async () => {
+    const repository = await createRepo();
+    const savePerformanceEvents = vi.spyOn(repository, "savePerformanceEvents");
+    const app = createApp({
+      repository,
+      now: () => new Date("2026-07-24T00:00:00.000Z"),
+      performanceHashSecret: "test-performance-secret"
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/performance/events", {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain;charset=UTF-8",
+          origin: "https://app.example.com"
+        },
+        body: JSON.stringify(performancePageViewBatch("b5212051-84cc-4e6f-94cb-c45d911380df"))
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(savePerformanceEvents).toHaveBeenCalledWith([
+      expect.objectContaining({
+        appId: "github-profile-web",
+        route: "/",
+        sessionHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
+    ]);
+  });
+
+  it("accepts browser beacon ingestion from the configured production origin", async () => {
+    const repository = await createRepo();
+    const enqueuePerformanceEvents = vi.spyOn(repository, "enqueuePerformanceEvents");
+    const app = createApp({
+      repository,
+      isProduction: true,
+      performanceIngestEnabled: true,
+      corsOrigin: "https://app.example.com",
+      now: () => new Date("2026-07-24T00:00:00.000Z")
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/performance/events", {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain;charset=UTF-8",
+          origin: "https://app.example.com"
+        },
+        body: JSON.stringify(performancePageViewBatch("be88bb91-dda3-4188-8d95-c42634528258"))
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(enqueuePerformanceEvents).toHaveBeenCalledOnce();
+  });
+
+  it("rejects cross-origin browser beacon ingestion in production", async () => {
+    const repository = await createRepo();
+    const enqueuePerformanceEvents = vi.spyOn(repository, "enqueuePerformanceEvents");
+    const app = createApp({
+      repository,
+      isProduction: true,
+      performanceIngestEnabled: true,
+      corsOrigin: "https://app.example.com"
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/performance/events", {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain;charset=UTF-8",
+          origin: "https://untrusted.example"
+        },
+        body: JSON.stringify({ events: [] })
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(enqueuePerformanceEvents).not.toHaveBeenCalled();
+  });
+
+  it("allows browser beacon ingestion when production CORS uses a wildcard origin", async () => {
+    const repository = await createRepo();
+    const enqueuePerformanceEvents = vi.spyOn(repository, "enqueuePerformanceEvents");
+    const app = createApp({
+      repository,
+      isProduction: true,
+      performanceIngestEnabled: true,
+      corsOrigin: "*",
+      now: () => new Date("2026-07-24T00:00:00.000Z")
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/performance/events", {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain;charset=UTF-8",
+          origin: "https://any.example"
+        },
+        body: JSON.stringify(performancePageViewBatch("cf4d6539-7ef7-4285-9605-4d455b9c5ea8"))
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(enqueuePerformanceEvents).toHaveBeenCalledOnce();
+  });
+
   it("queues sanitized raw performance events in production", async () => {
     const repository = await createRepo();
     const enqueuePerformanceEvents = vi.spyOn(repository, "enqueuePerformanceEvents");
@@ -268,25 +395,25 @@ describe("admin MVP API", () => {
       now: () => new Date("2026-07-24T00:00:00.000Z")
     });
 
-    const response = await app.fetch(
-      jsonRequest("/api/performance/events", {
-        events: [
-          {
-            eventId: "44b099ab-bc54-4bff-9afe-6a5c5118bf4d",
-            eventType: "error",
-            occurredAt: "2026-07-23T23:59:00.000Z",
-            appId: "github-profile",
-            sessionId: "opaque_session_123456",
-            route: "/",
-            name: "javascript.error",
-            value: 1,
-            unit: "count",
-            sdkVersion: "1.0.0",
-            message: "Failed for sam@example.com at https://example.com/path?token=secret"
-          }
-        ]
-      })
-    );
+    const request = jsonRequest("/api/performance/events", {
+      events: [
+        {
+          eventId: "44b099ab-bc54-4bff-9afe-6a5c5118bf4d",
+          eventType: "error",
+          occurredAt: "2026-07-23T23:59:00.000Z",
+          appId: "github-profile",
+          sessionId: "opaque_session_123456",
+          route: "/",
+          name: "javascript.error",
+          value: 1,
+          unit: "count",
+          sdkVersion: "1.0.0",
+          message: "Failed for sam@example.com at https://example.com/path?token=secret"
+        }
+      ]
+    });
+    request.headers.set("origin", "https://untrusted.example");
+    const response = await app.fetch(request);
 
     expect(response.status).toBe(202);
     expect(enqueuePerformanceEvents).toHaveBeenCalledWith([
